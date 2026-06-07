@@ -27,7 +27,7 @@ def format_activity_summary(rows: list, for_date: str) -> str:
         return f"No activity recorded for {for_date} yet."
 
     total = sum(r["minutes"] for r in rows)
-    productive = sum(r["minutes"] for r in rows if r["category"] not in ("social", "video"))
+    productive = sum(r["minutes"] for r in rows if r["category"] not in ("social", "video", "browsing"))
 
     lines = [f"📊 *Activity for {for_date}* (total: {_fmt_min(total)})"]
     lines.append(f"✅ Productive: {_fmt_min(productive)}  |  😴 Other: {_fmt_min(total - productive)}\n")

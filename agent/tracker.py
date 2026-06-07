@@ -26,11 +26,19 @@ def _detect_hostname() -> str:
 
 
 def _bucket_id(hostname: str, bucket_type: str) -> str | None:
-    """Return the first bucket whose id starts with `bucket_type` for hostname."""
+    """
+    Return the best-matching bucket for this hostname and type.
+    Prefers buckets that contain the hostname (e.g. aw-watcher-web-chrome_HOSTNAME)
+    over generic ones (e.g. aw-watcher-web-chrome with no hostname suffix).
+    """
     buckets = _get("/api/0/buckets")
-    prefix = f"{bucket_type}_{hostname}"
+    # Pass 1: must start with bucket_type AND contain hostname
     for bid in buckets:
-        if bid.startswith(prefix) or bucket_type in bid:
+        if bid.startswith(bucket_type) and hostname in bid:
+            return bid
+    # Pass 2: fallback — any bucket that starts with the type prefix
+    for bid in buckets:
+        if bid.startswith(bucket_type):
             return bid
     return None
 

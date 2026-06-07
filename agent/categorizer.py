@@ -92,21 +92,33 @@ def classify(app: str, domain: str) -> dict | None:
     return None
 
 
+# Browser app names — window events for these are skipped in favour of web events,
+# which carry the actual URL/domain and avoid double-counting.
+BROWSER_APPS = {
+    "Google Chrome", "Chrome", "Chromium",
+    "Firefox", "Safari", "Microsoft Edge",
+    "Opera", "Brave Browser", "Arc",
+}
+
+
 def categorize_events(events: dict) -> tuple[list[dict], list[dict]]:
     """
     Roll up window + web events into aggregates and ambiguous items.
-    Web events override window events for the same time slice when a URL is known.
+
+    Browser apps (Chrome, Firefox, etc.) are handled exclusively by web events
+    so we get URL-level granularity without double-counting window time.
+    Non-browser apps are handled by window events.
+
+    Unmatched web events go to "browsing" in aggregates (visible in /today)
+    AND to the ambiguous queue (for M3 classification).
     """
     if not _rules_loaded:
         load_rules()
 
-    # Build a per-second map from web events (url -> domain)
-    # AW events: {"timestamp": ..., "duration": float (seconds), "data": {...}}
-
     agg: dict[tuple, float] = defaultdict(float)   # (category, app, domain) -> minutes
     amb: dict[tuple, list] = defaultdict(list)      # (app, domain, title) -> [minutes]
 
-    # Process window events as base
+    # Window events — non-browser apps only
     for ev in events.get("window", []):
         data = ev.get("data", {})
         app = data.get("app", "")
@@ -114,15 +126,15 @@ def categorize_events(events: dict) -> tuple[list[dict], list[dict]]:
         duration_min = ev.get("duration", 0) / 60.0
         if duration_min <= 0:
             continue
-        domain = ""
-        rule = classify(app, domain)
+        if app in BROWSER_APPS:
+            continue  # web events cover browser time with actual domains
+        rule = classify(app, "")
         if rule:
-            key = (rule["category"], app, domain)
-            agg[key] += duration_min
+            agg[(rule["category"], app, "")] += duration_min
         else:
-            amb[(app, domain, title)].append(duration_min)
+            amb[(app, "", title)].append(duration_min)
 
-    # Process web events — these are more specific; domain overrides app entry
+    # Web events — all browser time, classified by domain
     for ev in events.get("web", []):
         data = ev.get("data", {})
         url = data.get("url", "")
@@ -132,11 +144,16 @@ def categorize_events(events: dict) -> tuple[list[dict], list[dict]]:
         if duration_min <= 0:
             continue
         domain = _extract_domain(url)
+        # Skip browser internals (new tab, settings, extensions)
+        if not domain or domain.startswith("chrome") or domain.startswith("about"):
+            continue
         rule = classify(app, domain)
         if rule:
-            key = (rule["category"], app, domain)
-            agg[key] += duration_min
+            agg[(rule["category"], app, domain)] += duration_min
         else:
+            # Show as "browsing" in /today so unrecognised sites are visible,
+            # and queue for M3 classification.
+            agg[("browsing", app, domain)] += duration_min
             amb[(app, domain, title)].append(duration_min)
 
     aggregates = [
