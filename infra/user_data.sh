@@ -18,11 +18,18 @@ REPO=__GITHUB_REPO__
 REGION=__REGION__
 INSTALL_DIR=/opt/focassist
 
-# Embed GitHub PAT into clone URL if stored in SSM (for private repos)
-GITHUB_PAT=$(aws ssm get-parameter --name /focassist/github_pat --with-decryption \
-  --query Parameter.Value --output text --region "$REGION" 2>/dev/null || true)
+# Embed GitHub PAT into clone URL if stored in SSM (for private repos).
+# Uses boto3 (installed above) — aws CLI is not yet available at this stage.
+GITHUB_PAT=$(python3 - <<PYEOF
+import boto3, sys
+try:
+    ssm = boto3.client('ssm', region_name='$REGION')
+    print(ssm.get_parameter(Name='/focassist/github_pat', WithDecryption=True)['Parameter']['Value'], end='')
+except Exception:
+    pass
+PYEOF
+)
 if [ -n "$GITHUB_PAT" ]; then
-  # Inject PAT: https://github.com/... -> https://<pat>@github.com/...
   CLONE_URL=$(echo "$REPO" | sed "s|https://|https://${GITHUB_PAT}@|")
 else
   CLONE_URL="$REPO"
