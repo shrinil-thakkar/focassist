@@ -1,7 +1,10 @@
 """
 v1 rule engine: parse Telegram commands and build nudge text.
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def parse_command(text: str) -> dict:
@@ -68,9 +71,13 @@ def format_morning_confirm(today: str, plan_raw: str) -> str:
     )
 
 
-def tomorrow_date() -> str:
-    return (date.today() + timedelta(days=1)).isoformat()
+def ist_now() -> datetime:
+    return datetime.now(IST)
 
 
 def today_date() -> str:
-    return date.today().isoformat()
+    return ist_now().date().isoformat()
+
+
+def tomorrow_date() -> str:
+    return (ist_now().date() + timedelta(days=1)).isoformat()

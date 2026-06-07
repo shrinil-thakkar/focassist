@@ -187,8 +187,14 @@ def get_active_directive() -> dict:
     """Return the current focus-block directive from time_blocks."""
     import json
     from datetime import datetime, timezone
-    now_str = datetime.now(timezone.utc).strftime("%H:%M")
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo("Asia/Kolkata")
+
+    # Time blocks are stored as IST HH:MM — compare in IST
+    now_ist = datetime.now(IST)
+    now_str = now_ist.strftime("%H:%M")
+    today = now_ist.strftime("%Y-%m-%d")
+
     with get_db() as conn:
         row = conn.execute(
             """SELECT * FROM time_blocks
@@ -201,11 +207,11 @@ def get_active_directive() -> dict:
     if not row:
         return {"focus_block_active": False, "block_domains": [], "block_until": None}
 
-    from datetime import datetime, timezone
-    end_dt = datetime.strptime(f"{today} {row['end']}", "%Y-%m-%d %H:%M")
-    end_dt = end_dt.replace(tzinfo=timezone.utc)
+    # Treat block end as IST, convert to UTC for the Mac agent
+    end_dt_ist = datetime.strptime(f"{today} {row['end']}", "%Y-%m-%d %H:%M").replace(tzinfo=IST)
+    end_dt_utc = end_dt_ist.astimezone(timezone.utc)
     return {
         "focus_block_active": True,
         "block_domains": json.loads(row["block_domains"] or "[]"),
-        "block_until": end_dt.isoformat(),
+        "block_until": end_dt_utc.isoformat(),
     }

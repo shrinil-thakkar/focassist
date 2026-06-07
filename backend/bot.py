@@ -92,7 +92,8 @@ async def cmd_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_report(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    today = date.today()
+    from backend.rules import ist_now
+    today = ist_now().date()
     lines = ["📅 *Weekly report*\n"]
     total_prod = 0.0
     total_all = 0.0
@@ -185,8 +186,9 @@ async def cmd_block_now(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         domains = DEFAULT_BLOCK_DOMAINS
 
     import json
+    from zoneinfo import ZoneInfo
     today = today_date()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))   # store times in IST
     start_str = now.strftime("%H:%M")
     end_dt = now + timedelta(minutes=mins)
     end_str = end_dt.strftime("%H:%M")

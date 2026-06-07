@@ -80,10 +80,10 @@ async def _morning_nudge(send) -> None:
 
 async def _weekly_report(send) -> None:
     from backend import db
-    from backend.rules import _fmt_min
-    from datetime import date, timedelta
+    from backend.rules import _fmt_min, ist_now
+    from datetime import timedelta
 
-    today = date.today()
+    today = ist_now().date()
     lines = ["📅 *Weekly report*\n"]
     total_prod = 0.0
     total_all = 0.0
