@@ -167,6 +167,32 @@ def upsert_rule(match_type: str, match_value: str, category: str,
         )
 
 
+def save_time_blocks(date: str, blocks: list[dict]) -> None:
+    """Replace all time blocks for a date with the parsed plan."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM time_blocks WHERE date = ?", (date,))
+        conn.executemany(
+            """INSERT INTO time_blocks (date, start, end, label, kind, block_domains)
+               VALUES (:date, :start, :end, :label, :kind, :block_domains)""",
+            blocks,
+        )
+
+
+def get_time_blocks_for_date(date: str) -> list[sqlite3.Row]:
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT * FROM time_blocks WHERE date = ? ORDER BY start",
+            (date,),
+        ).fetchall()
+
+
+def get_time_block_by_id(block_id: int) -> sqlite3.Row | None:
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT * FROM time_blocks WHERE id = ?", (block_id,)
+        ).fetchone()
+
+
 def save_plan(date: str, raw_text: str) -> None:
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()

@@ -154,6 +154,11 @@ async def cmd_shift(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             (new_start, new_end, row["id"]),
         )
 
+    # Reschedule nudge jobs for the moved block
+    from backend import scheduler
+    scheduler.cancel_block_nudges(row["id"])
+    scheduler.schedule_block_nudges(today)
+
     sign = "+" if delta >= 0 else ""
     await update.message.reply_text(
         f"✅ Shifted '{label}' by {sign}{delta} min → {new_start}–{new_end}"
@@ -230,10 +235,18 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if chat_id in _awaiting_plan:
         plan_date = _awaiting_plan.pop(chat_id)
         db.save_plan(plan_date, text)
+
+        # Parse into structured time blocks
+        from backend.plan_parser import parse_plan, format_blocks_confirmation
+        from backend import scheduler
+        blocks = parse_plan(text, plan_date)
+        if blocks:
+            db.save_time_blocks(plan_date, blocks)
+            scheduler.schedule_block_nudges(plan_date)
+
         await update.message.reply_text(
-            f"✅ Plan for {plan_date} saved!\n\n"
-            "You can update it any time with /plan.\n"
-            "Use /today to see today's activity."
+            format_blocks_confirmation(blocks),
+            parse_mode="Markdown",
         )
         return
 
