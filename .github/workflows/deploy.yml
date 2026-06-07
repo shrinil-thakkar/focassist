@@ -1,0 +1,33 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "backend/**"
+      - "shared/**"
+      - "requirements-backend.txt"
+      - ".github/workflows/deploy.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/focassist.pem
+          chmod 400 ~/.ssh/focassist.pem
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/focassist.pem ubuntu@${{ secrets.EC2_HOST }} '
+            set -euo pipefail
+            cd /opt/focassist
+            git pull --ff-only
+            .venv/bin/pip install -q -r requirements-backend.txt
+            sudo systemctl restart focassist
+            echo "--- service status ---"
+            sudo systemctl status focassist --no-pager -l
+          '
