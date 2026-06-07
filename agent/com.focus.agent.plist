@@ -8,24 +8,22 @@
 
     <key>ProgramArguments</key>
     <array>
-        <!-- EDIT: replace YOURUSERNAME with your username; venv uses python3.12 -->
-        <string>/Users/YOURUSERNAME/git/focassist/.venv/bin/python</string>
+        <string>/Users/shrinilthakkar/git/focassist/.venv/bin/python</string>
         <string>-m</string>
         <string>agent.main</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <!-- EDIT: replace with your repo path -->
-    <string>/Users/YOURUSERNAME/git/focassist</string>
+    <string>/Users/shrinilthakkar/git/focassist</string>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>FOCASSIST_BACKEND_URL</key>
-        <!-- EDIT: your EC2 backend URL, e.g. https://your-ec2-ip -->
-        <string>https://YOUR_EC2_IP_OR_DOMAIN</string>
+        <string>http://13.205.122.54:8000</string>
         <key>FOCASSIST_TOKEN</key>
-        <!-- EDIT: shared secret, must match backend FOCASSIST_TOKEN env var -->
-        <string>CHANGE_ME_SHARED_SECRET</string>
+        <string>aedfb72a60b6c1c79bb31a3f3c31e5d577b6b4fa4a05ccb4babf38163ba36614</string>
+        <key>AW_HOSTNAME</key>
+        <string>SIMPL-ANALYTICS-016.local</string>
     </dict>
 
     <key>RunAtLoad</key>
