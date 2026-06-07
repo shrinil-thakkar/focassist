@@ -1,0 +1,7 @@
+# Cloud backend dependencies (AWS EC2 t4g.micro — ARM/Graviton)
+# Requires Python 3.12 or 3.13 — pydantic-core does not yet support 3.14
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-telegram-bot==21.9
+APScheduler==3.10.4
+pydantic==2.10.4

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.focus.agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- EDIT: replace YOURUSERNAME with your username; venv uses python3.12 -->
+        <string>/Users/YOURUSERNAME/git/focassist/.venv/bin/python</string>
+        <string>-m</string>
+        <string>agent.main</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <!-- EDIT: replace with your repo path -->
+    <string>/Users/YOURUSERNAME/git/focassist</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>FOCASSIST_BACKEND_URL</key>
+        <!-- EDIT: your EC2 backend URL, e.g. https://your-ec2-ip -->
+        <string>https://YOUR_EC2_IP_OR_DOMAIN</string>
+        <key>FOCASSIST_TOKEN</key>
+        <!-- EDIT: shared secret, must match backend FOCASSIST_TOKEN env var -->
+        <string>CHANGE_ME_SHARED_SECRET</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/focassist-agent.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/focassist-agent-error.log</string>
+
+    <key>ThrottleInterval</key>
+    <integer>300</integer>
+</dict>
+</plist>

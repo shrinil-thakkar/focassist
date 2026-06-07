@@ -1,0 +1,3 @@
+# Mac agent dependencies
+# No third-party packages needed for the agent (uses stdlib urllib + json)
+# If you add optional features (e.g. requests), list them here.
