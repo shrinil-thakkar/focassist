@@ -15,6 +15,13 @@ def get(name: str, encrypted: bool = False) -> str:
     return ssm.get_parameter(Name=name, WithDecryption=encrypted)["Parameter"]["Value"]
 
 
+def get_optional(name: str, encrypted: bool = False) -> str:
+    try:
+        return get(name, encrypted)
+    except ssm.exceptions.ParameterNotFound:
+        return ""
+
+
 token = get("/focassist/token", encrypted=True)
 tg_token = get("/focassist/telegram_bot_token", encrypted=True)
 tg_chat_id = get("/focassist/telegram_chat_id")

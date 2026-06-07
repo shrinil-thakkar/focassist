@@ -18,11 +18,21 @@ REPO=__GITHUB_REPO__
 REGION=__REGION__
 INSTALL_DIR=/opt/focassist
 
+# Embed GitHub PAT into clone URL if stored in SSM (for private repos)
+GITHUB_PAT=$(aws ssm get-parameter --name /focassist/github_pat --with-decryption \
+  --query Parameter.Value --output text --region "$REGION" 2>/dev/null || true)
+if [ -n "$GITHUB_PAT" ]; then
+  # Inject PAT: https://github.com/... -> https://<pat>@github.com/...
+  CLONE_URL=$(echo "$REPO" | sed "s|https://|https://${GITHUB_PAT}@|")
+else
+  CLONE_URL="$REPO"
+fi
+
 if [ -d "$INSTALL_DIR/.git" ]; then
   echo "Repo already cloned — pulling latest"
   git -C "$INSTALL_DIR" pull --ff-only
 else
-  git clone "$REPO" "$INSTALL_DIR"
+  git clone "$CLONE_URL" "$INSTALL_DIR"
 fi
 chown -R ubuntu:ubuntu "$INSTALL_DIR"
 
