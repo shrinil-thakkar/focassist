@@ -25,8 +25,10 @@ def start(send_message_fn) -> AsyncIOScheduler:
     from backend import db
     evening_time = db.get_config("nudge_evening", "21:00")
     morning_time = db.get_config("nudge_morning", "08:30")
+    daily_report_time = db.get_config("nudge_daily_report", "19:30")
     evening_h, evening_m = map(int, evening_time.split(":"))
     morning_h, morning_m = map(int, morning_time.split(":"))
+    report_h, report_m   = map(int, daily_report_time.split(":"))
 
     _scheduler.add_job(
         _evening_nudge, CronTrigger(hour=evening_h, minute=evening_m),
@@ -35,6 +37,10 @@ def start(send_message_fn) -> AsyncIOScheduler:
     _scheduler.add_job(
         _morning_nudge, CronTrigger(hour=morning_h, minute=morning_m),
         id="morning_nudge", replace_existing=True, args=[send_message_fn],
+    )
+    _scheduler.add_job(
+        _daily_report, CronTrigger(hour=report_h, minute=report_m),
+        id="daily_report", replace_existing=True, args=[send_message_fn],
     )
     _scheduler.add_job(
         _weekly_report,
@@ -122,7 +128,6 @@ async def _focus_start_nudge(send, block: dict) -> None:
 
 async def _focus_end_nudge(send, block: dict, date: str) -> None:
     from backend import db
-    from backend.rules import _fmt_min
 
     await send(
         f"✅ *Focus block complete!* ({block['label']})\n"
@@ -140,6 +145,30 @@ async def _focus_end_nudge(send, block: dict, date: str) -> None:
                 "Markdown",
             )
             break
+
+
+async def _daily_report(send) -> None:
+    from backend import db
+    from backend.rules import today_date, ist_now
+    from backend.scoring import format_daily_report, compute_score
+
+    today = today_date()
+    yesterday = (ist_now().date() - timedelta(days=1)).isoformat()
+
+    aggregates = [dict(r) for r in db.get_activity_for_date(today)]
+    sessions   = [dict(r) for r in db.get_sessions_for_date(today)]
+    timeline   = db.get_timeline_for_date(today)
+
+    prev_aggs = [dict(r) for r in db.get_activity_for_date(yesterday)]
+    prev_sess = [dict(r) for r in db.get_sessions_for_date(yesterday)]
+    prev_score = compute_score(prev_aggs, prev_sess)["score"] if (prev_aggs or prev_sess) else None
+
+    deep_target   = float(db.get_config("score_deep_target_min",   "240"))
+    streak_target = float(db.get_config("score_streak_target_min", "90"))
+
+    msg = format_daily_report(today, aggregates, sessions, timeline,
+                               prev_score, deep_target, streak_target)
+    await send(msg, "Markdown")
 
 
 async def _evening_nudge(send) -> None:

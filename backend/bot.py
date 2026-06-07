@@ -23,12 +23,10 @@ from telegram.ext import (
 
 import backend.db as db
 from backend.rules import (
-    format_activity_summary,
     format_plan_prompt,
     format_morning_confirm,
     tomorrow_date,
     today_date,
-    _fmt_min,
 )
 from backend import scheduler
 

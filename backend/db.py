@@ -116,6 +116,7 @@ def init_db() -> None:
             "telegram_chat_id":     "",
             "score_deep_target_min":    "240",
             "score_streak_target_min":  "90",
+            "nudge_daily_report":       "19:30",
         }
         for key, value in defaults.items():
             conn.execute(
@@ -301,17 +302,19 @@ def get_rules() -> list[sqlite3.Row]:
         return conn.execute("SELECT * FROM rules ORDER BY source, id").fetchall()
 
 
-def upsert_rule(match_type: str, match_value: str, category: str,
-                productive: bool, source: str = "user") -> None:
+def upsert_rule(match_type: str, match_value: str, tier: str, category: str,
+                source: str = "user") -> None:
+    productive = int(tier in ("deep", "supporting", "neutral"))
     with get_db() as conn:
         conn.execute(
-            """INSERT INTO rules (match_type, match_value, category, productive, source)
-               VALUES (?, ?, ?, ?, ?)
+            """INSERT INTO rules (match_type, match_value, tier, category, productive, source)
+               VALUES (?, ?, ?, ?, ?, ?)
                ON CONFLICT(match_type, match_value)
-               DO UPDATE SET category=excluded.category,
+               DO UPDATE SET tier=excluded.tier,
+                             category=excluded.category,
                              productive=excluded.productive,
                              source=excluded.source""",
-            (match_type, match_value, category, int(productive), source),
+            (match_type, match_value, tier, category, productive, source),
         )
 
 
