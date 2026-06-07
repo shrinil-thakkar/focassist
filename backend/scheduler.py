@@ -164,25 +164,18 @@ async def _morning_nudge(send) -> None:
 
 async def _weekly_report(send) -> None:
     from backend import db
-    from backend.rules import _fmt_min, ist_now
+    from backend.rules import ist_now
+    from backend.scoring import format_weekly_report
 
     today = ist_now().date()
-    lines = ["📅 *Weekly report*\n"]
-    total_prod = total_all = 0.0
-
+    days = []
     for offset in range(6, -1, -1):
         d = (today - timedelta(days=offset)).isoformat()
-        rows = db.get_activity_for_date(d)
-        day_total = sum(r["minutes"] for r in rows)
-        day_prod  = sum(r["minutes"] for r in rows if r["category"] not in ("social", "video", "browsing"))
-        total_all += day_total
-        total_prod += day_prod
-        lines.append(f"`{d}`: {_fmt_min(day_prod)} productive / {_fmt_min(day_total)} total")
-
-    if total_all > 0:
-        pct = int(total_prod / total_all * 100)
-        lines.append(f"\n🏆 Week total: {_fmt_min(total_prod)} productive ({pct}%)")
-    else:
-        lines.append("\nNo data recorded this week yet.")
-
-    await send("\n".join(lines), "Markdown")
+        days.append({
+            "date":       d,
+            "aggregates": [dict(r) for r in db.get_activity_for_date(d)],
+            "sessions":   [dict(r) for r in db.get_sessions_for_date(d)],
+        })
+    deep_target   = float(db.get_config("score_deep_target_min",   "240"))
+    streak_target = float(db.get_config("score_streak_target_min", "90"))
+    await send(format_weekly_report(days, deep_target, streak_target), "Markdown")

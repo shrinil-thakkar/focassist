@@ -85,35 +85,42 @@ async def cmd_plan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    from backend.scoring import format_daily_report, compute_score
     today = today_date()
-    rows = db.get_activity_for_date(today)
-    msg = format_activity_summary(rows, today)
+    aggregates = [dict(r) for r in db.get_activity_for_date(today)]
+    sessions   = [dict(r) for r in db.get_sessions_for_date(today)]
+    timeline   = db.get_timeline_for_date(today)
+
+    # Yesterday's score for trend arrow
+    from backend.rules import ist_now
+    yesterday = (ist_now().date() - __import__("datetime").timedelta(days=1)).isoformat()
+    prev_aggs  = [dict(r) for r in db.get_activity_for_date(yesterday)]
+    prev_sess  = [dict(r) for r in db.get_sessions_for_date(yesterday)]
+    prev_score = compute_score(prev_aggs, prev_sess)["score"] if (prev_aggs or prev_sess) else None
+
+    deep_target  = float(db.get_config("score_deep_target_min",   "240"))
+    streak_target = float(db.get_config("score_streak_target_min", "90"))
+    msg = format_daily_report(today, aggregates, sessions, timeline,
+                               prev_score, deep_target, streak_target)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 async def cmd_report(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    from backend.scoring import format_weekly_report
     from backend.rules import ist_now
     today = ist_now().date()
-    lines = ["📅 *Weekly report*\n"]
-    total_prod = 0.0
-    total_all = 0.0
-
+    days = []
     for offset in range(6, -1, -1):
         d = (today - timedelta(days=offset)).isoformat()
-        rows = db.get_activity_for_date(d)
-        day_total = sum(r["minutes"] for r in rows)
-        day_prod = sum(r["minutes"] for r in rows if r["category"] not in ("social", "video"))
-        total_all += day_total
-        total_prod += day_prod
-        lines.append(f"`{d}`: {_fmt_min(day_prod)} prod / {_fmt_min(day_total)} total")
-
-    if total_all > 0:
-        pct = int(total_prod / total_all * 100)
-        lines.append(f"\n🏆 Week: {_fmt_min(total_prod)} productive ({pct}%)")
-    else:
-        lines.append("\nNo data this week yet.")
-
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        days.append({
+            "date":       d,
+            "aggregates": [dict(r) for r in db.get_activity_for_date(d)],
+            "sessions":   [dict(r) for r in db.get_sessions_for_date(d)],
+        })
+    deep_target   = float(db.get_config("score_deep_target_min",   "240"))
+    streak_target = float(db.get_config("score_streak_target_min", "90"))
+    msg = format_weekly_report(days, deep_target, streak_target)
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 async def cmd_shift(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

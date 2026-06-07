@@ -29,8 +29,27 @@ def get_db():
         conn.close()
 
 
+# Old category → (tier, category) backfill mapping
+_CATEGORY_REMAP: dict[str, tuple[str, str]] = {
+    "dev":      ("deep",        "coding"),
+    "design":   ("deep",        "design"),
+    "ai":       ("deep",        "ai"),
+    "docs":     ("deep",        "docs"),
+    "work":     ("supporting",  "planning"),
+    "comms":    ("supporting",  "comms"),
+    "meetings": ("supporting",  "meetings"),
+    "planning": ("supporting",  "planning"),
+    "video":    ("distraction", "video"),
+    "social":   ("distraction", "social"),
+    "browsing": ("distraction", "browsing"),
+    "other":    ("distraction", "browsing"),
+    "system":   ("neutral",     "system"),
+}
+
+
 def init_db() -> None:
     with get_db() as conn:
+        # ── Static tables (no migrations needed) ─────────────────────────────
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS config (
                 key   TEXT PRIMARY KEY,
@@ -38,32 +57,13 @@ def init_db() -> None:
             );
 
             CREATE TABLE IF NOT EXISTS time_blocks (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                date         TEXT NOT NULL,          -- YYYY-MM-DD
-                start        TEXT NOT NULL,          -- HH:MM
-                end          TEXT NOT NULL,          -- HH:MM
-                label        TEXT NOT NULL,
-                kind         TEXT NOT NULL CHECK(kind IN ('productive','unproductive','focus')),
-                block_domains TEXT DEFAULT '[]'      -- JSON list of domains to block
-            );
-
-            CREATE TABLE IF NOT EXISTS rules (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                match_type  TEXT NOT NULL CHECK(match_type IN ('domain','app','regex')),
-                match_value TEXT NOT NULL,
-                category    TEXT NOT NULL,
-                productive  INTEGER NOT NULL DEFAULT 1,  -- 0/1
-                source      TEXT NOT NULL DEFAULT 'seed' CHECK(source IN ('seed','user','llm')),
-                UNIQUE(match_type, match_value)
-            );
-
-            CREATE TABLE IF NOT EXISTS activity (
-                id       INTEGER PRIMARY KEY AUTOINCREMENT,
-                date     TEXT NOT NULL,
-                category TEXT NOT NULL,
-                app      TEXT NOT NULL,
-                domain   TEXT NOT NULL,
-                minutes  REAL NOT NULL
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                date          TEXT NOT NULL,
+                start         TEXT NOT NULL,
+                end           TEXT NOT NULL,
+                label         TEXT NOT NULL,
+                kind          TEXT NOT NULL CHECK(kind IN ('productive','unproductive','focus')),
+                block_domains TEXT DEFAULT '[]'
             );
 
             CREATE TABLE IF NOT EXISTS ambiguous_queue (
@@ -78,26 +78,132 @@ def init_db() -> None:
 
             CREATE TABLE IF NOT EXISTS plans (
                 id      INTEGER PRIMARY KEY AUTOINCREMENT,
-                date    TEXT NOT NULL UNIQUE,    -- YYYY-MM-DD
-                raw     TEXT NOT NULL,           -- raw text the user typed
-                created TEXT NOT NULL            -- ISO timestamp
+                date    TEXT NOT NULL UNIQUE,
+                raw     TEXT NOT NULL,
+                created TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS sessions (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                date             TEXT NOT NULL,
+                start            TEXT NOT NULL,
+                end              TEXT NOT NULL,
+                deep_minutes     REAL NOT NULL,
+                absorbed_minutes REAL NOT NULL,
+                span_minutes     REAL NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS daily_timeline (
+                date    TEXT PRIMARY KEY,
+                buckets TEXT NOT NULL   -- JSON array of tier strings (15-min buckets)
             );
         """)
 
-        # Seed default config
+        # ── rules table — recreate if old schema (no tier/url_match support) ──
+        _migrate_rules(conn)
+
+        # ── activity table — add tier column + backfill old rows ──────────────
+        _migrate_activity(conn)
+
+        # ── Seed default config ───────────────────────────────────────────────
         defaults = {
-            "nudge_evening": "21:00",
-            "nudge_morning": "08:30",
-            "nudge_weekly": "Sunday 18:00",
-            "sensitive_apps": "[]",
-            "working_hours_start": "09:00",
-            "working_hours_end": "18:00",
-            "telegram_chat_id": "",
+            "nudge_evening":        "21:00",
+            "nudge_morning":        "08:30",
+            "nudge_weekly":         "Sunday 18:00",
+            "sensitive_apps":       "[]",
+            "working_hours_start":  "09:00",
+            "working_hours_end":    "18:00",
+            "telegram_chat_id":     "",
+            "score_deep_target_min":    "240",
+            "score_streak_target_min":  "90",
         }
         for key, value in defaults.items():
             conn.execute(
                 "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)",
                 (key, value),
+            )
+
+
+def _migrate_rules(conn: sqlite3.Connection) -> None:
+    """Recreate rules table with url_match support + tier column."""
+    # Check if migration is needed by probing for the tier column
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(rules)").fetchall()}
+    if "tier" in cols:
+        return  # already migrated
+
+    # Capture existing user/llm rules before dropping the table
+    old_rows = []
+    try:
+        old_rows = conn.execute(
+            "SELECT match_type, match_value, category, productive, source FROM rules"
+        ).fetchall()
+    except Exception:
+        pass
+
+    conn.executescript("""
+        DROP TABLE IF EXISTS rules;
+        CREATE TABLE rules (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_type  TEXT NOT NULL
+                        CHECK(match_type IN ('domain','app','url_match','regex')),
+            match_value TEXT NOT NULL,
+            tier        TEXT NOT NULL
+                        CHECK(tier IN ('deep','supporting','neutral','distraction')),
+            category    TEXT NOT NULL,
+            productive  INTEGER NOT NULL DEFAULT 1,
+            source      TEXT NOT NULL DEFAULT 'seed'
+                        CHECK(source IN ('seed','user','llm')),
+            UNIQUE(match_type, match_value)
+        );
+    """)
+
+    # Backfill old user/llm rules using the category remap
+    for row in old_rows:
+        if row["source"] == "seed":
+            continue  # seed rules come from the agent, don't persist them
+        old_cat = row["category"]
+        tier, new_cat = _CATEGORY_REMAP.get(old_cat, ("distraction", old_cat))
+        mt = row["match_type"]
+        if mt not in ("domain", "app", "url_match", "regex"):
+            mt = "domain"
+        try:
+            conn.execute(
+                """INSERT OR IGNORE INTO rules
+                   (match_type, match_value, tier, category, productive, source)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (mt, row["match_value"], tier, new_cat,
+                 int(tier in ("deep", "supporting", "neutral")), row["source"]),
+            )
+        except Exception:
+            pass
+
+
+def _migrate_activity(conn: sqlite3.Connection) -> None:
+    """Add tier column to activity table and backfill old rows."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(activity)").fetchall()}
+
+    if "activity" not in {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}:
+        conn.execute("""
+            CREATE TABLE activity (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                date     TEXT NOT NULL,
+                tier     TEXT NOT NULL DEFAULT 'distraction',
+                category TEXT NOT NULL,
+                app      TEXT NOT NULL,
+                domain   TEXT NOT NULL,
+                minutes  REAL NOT NULL
+            )
+        """)
+        return
+
+    if "tier" not in cols:
+        conn.execute("ALTER TABLE activity ADD COLUMN tier TEXT NOT NULL DEFAULT 'distraction'")
+        # Backfill existing rows
+        for old_cat, (tier, _) in _CATEGORY_REMAP.items():
+            conn.execute(
+                "UPDATE activity SET tier = ? WHERE category = ?",
+                (tier, old_cat),
             )
 
 
@@ -120,9 +226,51 @@ def upsert_activity(date: str, aggregates: list[dict]) -> None:
     with get_db() as conn:
         conn.execute("DELETE FROM activity WHERE date = ?", (date,))
         conn.executemany(
-            "INSERT INTO activity (date, category, app, domain, minutes) VALUES (?, ?, ?, ?, ?)",
-            [(date, a["category"], a["app"], a["domain"], a["minutes"]) for a in aggregates],
+            """INSERT INTO activity (date, tier, category, app, domain, minutes)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [(date,
+              a.get("tier", "distraction"),
+              a.get("category", "other"),
+              a["app"], a["domain"], a["minutes"]) for a in aggregates],
         )
+
+
+def upsert_sessions(date: str, sessions: list[dict]) -> None:
+    with get_db() as conn:
+        conn.execute("DELETE FROM sessions WHERE date = ?", (date,))
+        conn.executemany(
+            """INSERT INTO sessions (date, start, end, deep_minutes, absorbed_minutes, span_minutes)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [(date, s["start"], s["end"], s["deep_minutes"],
+              s["absorbed_minutes"], s["span_minutes"]) for s in sessions],
+        )
+
+
+def save_timeline(date: str, buckets: list[str]) -> None:
+    import json
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO daily_timeline (date, buckets) VALUES (?, ?)
+               ON CONFLICT(date) DO UPDATE SET buckets=excluded.buckets""",
+            (date, json.dumps(buckets)),
+        )
+
+
+def get_sessions_for_date(date: str) -> list[sqlite3.Row]:
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT * FROM sessions WHERE date = ? ORDER BY start",
+            (date,),
+        ).fetchall()
+
+
+def get_timeline_for_date(date: str) -> list[str]:
+    import json
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT buckets FROM daily_timeline WHERE date = ?", (date,)
+        ).fetchone()
+    return json.loads(row["buckets"]) if row else []
 
 
 def insert_ambiguous(items: list[dict]) -> None:

@@ -40,8 +40,14 @@ def _get(path: str) -> dict | list:
         return json.loads(r.read())
 
 
-def push_aggregates(target_date: date, aggregates: list[dict], ambiguous: list[dict]) -> None:
-    """Push today's aggregates and ambiguous queue to the backend."""
+def push_aggregates(
+    target_date: date,
+    aggregates: list[dict],
+    ambiguous: list[dict],
+    sessions: list[dict] | None = None,
+    timeline: list[str] | None = None,
+) -> None:
+    """Push today's aggregates, sessions and timeline to the backend."""
     if not BACKEND_URL:
         log.warning("FOCASSIST_BACKEND_URL not set — skipping push.")
         return
@@ -49,6 +55,8 @@ def push_aggregates(target_date: date, aggregates: list[dict], ambiguous: list[d
         "date": target_date.isoformat(),
         "aggregates": aggregates,
         "ambiguous": ambiguous,
+        "sessions": sessions or [],
+        "timeline": timeline or [],
     }
     try:
         _post("/ingest", payload)
