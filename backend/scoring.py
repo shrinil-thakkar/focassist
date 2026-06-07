@@ -66,12 +66,29 @@ def compute_score(
 # ── Timeline strip ────────────────────────────────────────────────────────────
 
 def _timeline_strip(buckets: list[str], start_h: int = 8, bucket_min: int = 15) -> str:
-    """Render 15-min buckets as emoji pairs with hour labels, e.g. 09|🟩🟩🟥🟥|10."""
+    """Render 15-min buckets per hour, trimming leading/trailing idle hours."""
     if not buckets:
         return ""
     per_hour = 60 // bucket_min
+    n_hours = len(buckets) // per_hour
+
+    # Find first and last hour that has any non-idle bucket
+    first_active = next(
+        (h for h in range(n_hours)
+         if any(b not in ("idle", "neutral") for b in buckets[h*per_hour:(h+1)*per_hour])),
+        None,
+    )
+    last_active = next(
+        (h for h in range(n_hours - 1, -1, -1)
+         if any(b not in ("idle", "neutral") for b in buckets[h*per_hour:(h+1)*per_hour])),
+        None,
+    )
+
+    if first_active is None:
+        return "No activity yet today."
+
     chunks = []
-    for hour_idx in range(len(buckets) // per_hour):
+    for hour_idx in range(first_active, last_active + 1):
         hour = start_h + hour_idx
         slice_ = buckets[hour_idx * per_hour: (hour_idx + 1) * per_hour]
         emojis = "".join(TIER_ICON.get(t, "⬜") for t in slice_)
@@ -102,12 +119,22 @@ def _coaching(metrics: dict, aggregates: list, sessions: list, prev_score: int |
         elif delta <= -10:
             insights.append(f"▼ {abs(delta)} pts vs yesterday. More deep work tomorrow.")
 
-    if metrics["session_count"] == 0:
-        insights.append("No focus sessions today — try scheduling a 25-min deep block.")
+    deep_agg = sum(
+        (a["minutes"] if isinstance(a, dict) else a["minutes"])
+        for a in aggregates
+        if (a["tier"] if isinstance(a, dict) else a["tier"]) == "deep"
+    )
+    if metrics["session_count"] == 0 and deep_agg >= 10:
+        insights.append(
+            f"{_fmt(deep_agg)} deep work done, but no single block ≥25 min — "
+            f"score stays low until focus is sustained. Try fewer interruptions."
+        )
+    elif metrics["session_count"] == 0:
+        insights.append("No focus sessions — try a 25-min uninterrupted deep block.")
     elif metrics["longest_session_minutes"] >= 90:
         insights.append(f"Strong {int(metrics['longest_session_minutes'])}m focus streak — protect that block.")
     elif metrics["longest_session_minutes"] < 30 and metrics["session_count"] > 0:
-        insights.append("Sessions stayed short — try batching distractions to break fewer streaks.")
+        insights.append("Sessions stayed short — fewer interruptions = longer streaks.")
 
     if metrics["active_minutes"] > 0:
         dist_pct = metrics["distraction_minutes"] / metrics["active_minutes"]
@@ -141,27 +168,46 @@ def format_daily_report(
     trend = ""
     if prev_score is not None:
         delta = m["score"] - prev_score
-        trend = f"  {'▲' if delta >= 0 else '▼'} {abs(delta)} vs yesterday"
+        arrow = "▲" if delta >= 0 else "▼"
+        trend = f"  {arrow} {abs(delta)} vs yesterday"
+
+    # Friendly date label
+    from datetime import date as _date
+    try:
+        parsed = _date.fromisoformat(for_date)
+        today = _date.today()
+        if parsed == today:
+            date_label = f"Today, {parsed.strftime('%b %-d')}"
+        elif (today - parsed).days == 1:
+            date_label = f"Yesterday, {parsed.strftime('%b %-d')}"
+        else:
+            date_label = parsed.strftime("%b %-d")
+    except Exception:
+        date_label = for_date
+
     lines = [f"📊 *Focus Score: {m['score']}/100*{trend}"]
-    lines.append(f"🗓 {for_date} · active {_fmt(active)}\n")
+    lines.append(f"🗓 {date_label} · active {_fmt(active)}\n")
 
     # Tier breakdown
+    top_dist = _top_distraction(aggregates)
     for tier in ("deep", "supporting", "distraction", "neutral"):
         mins = totals.get(tier, 0)
+        extra = ""
         if tier == "deep" and sessions:
-            sess_info = f"   {m['session_count']} session{'s' if m['session_count'] != 1 else ''} · longest {int(m['longest_session_minutes'])}m"
-        else:
-            sess_info = ""
+            extra = f"   {m['session_count']} session{'s' if m['session_count'] != 1 else ''} · longest {int(m['longest_session_minutes'])}m"
+        elif tier == "distraction" and mins > 0 and top_dist:
+            extra = f"   {top_dist}"
         if mins > 0:
-            lines.append(f"{TIER_ICON[tier]} {TIER_LABEL[tier]:<12} {_fmt(mins)}{sess_info}")
-        elif tier != "neutral":
+            lines.append(f"{TIER_ICON[tier]} {TIER_LABEL[tier]:<12} {_fmt(mins)}{extra}")
+        elif tier not in ("neutral", "supporting"):
             lines.append(f"{TIER_ICON[tier]} {TIER_LABEL[tier]:<12} —")
 
-    # Timeline strip
+    # Timeline strip (label-free, trimmed to active hours)
     if timeline:
-        lines.append("")
-        lines.append("*Timeline (15-min buckets):*")
-        lines.append(_timeline_strip(timeline))
+        strip = _timeline_strip(timeline)
+        if strip:
+            lines.append("")
+            lines.append(strip)
 
     # Coaching
     insights = _coaching(m, aggregates, sessions, prev_score)
