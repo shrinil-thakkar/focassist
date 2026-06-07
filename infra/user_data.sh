@@ -1,5 +1,6 @@
 #!/bin/bash
-# EC2 bootstrap — runs once at first launch as root.
+# EC2 bootstrap — runs on first launch (and on every start if cloud-init is cleaned).
+# To re-run manually: sudo cloud-init clean --logs && sudo cloud-init init
 # All output is logged to /var/log/focassist-setup.log
 set -euo pipefail
 exec > /var/log/focassist-setup.log 2>&1

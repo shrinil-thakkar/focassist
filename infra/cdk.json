@@ -1,5 +1,5 @@
 {
-  "app": "JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 python3 app.py",
+  "app": "JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 .venv/bin/python app.py",
   "context": {
     "github_repo": "https://github.com/shrinil-thakkar/focassist.git",
     "allowed_cidr": "0.0.0.0/0",
