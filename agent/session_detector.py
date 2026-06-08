@@ -11,6 +11,7 @@ Algorithm (from spec §3):
 
 Also produces a 15-min bucket timeline for the daily report strip.
 """
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -25,15 +26,16 @@ TIMELINE_START_H   = 8    # 08:00 IST
 TIMELINE_END_H     = 22   # 22:00 IST
 
 
-def _tier_timeline(events: dict) -> list[tuple[datetime, float, str]]:
+def _tier_timeline(events: dict) -> list[tuple[datetime, float, str, str, str, str]]:
     """
-    Build a sorted list of (utc_start, duration_sec, tier) from raw AW events.
-    Browser window events are skipped — web events are used for browser time.
-    Neutral events are included (needed for gap detection) but won't open sessions.
+    Build a sorted list of (utc_start, duration_sec, tier, category, app, domain)
+    from raw AW events. Browser window events are skipped — web events are used
+    for browser time. Neutral events are included (needed for gap detection) but
+    won't open sessions.
     """
     from agent.categorizer import classify, BROWSER_APPS, _extract_domain
 
-    entries: list[tuple[datetime, float, str]] = []
+    entries: list[tuple[datetime, float, str, str, str, str]] = []
 
     for ev in events.get("window", []):
         data = ev.get("data", {})
@@ -43,10 +45,11 @@ def _tier_timeline(events: dict) -> list[tuple[datetime, float, str]]:
             continue
         rule = classify(app, "", "")
         tier = rule["tier"] if rule else "distraction"
+        category = rule["category"] if rule else "other"
         ts = datetime.fromisoformat(ev["timestamp"])
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
-        entries.append((ts, dur, tier))
+        entries.append((ts, dur, tier, category, app, ""))
 
     for ev in events.get("web", []):
         data   = ev.get("data", {})
@@ -57,12 +60,14 @@ def _tier_timeline(events: dict) -> list[tuple[datetime, float, str]]:
         domain = _extract_domain(url)
         if not domain or domain.startswith("chrome") or domain.startswith("about"):
             continue
-        rule = classify("Browser", domain, url)
+        app = data.get("app", "Browser")
+        rule = classify(app, domain, url)
         tier = rule["tier"] if rule else "distraction"
+        category = rule["category"] if rule else "browsing"
         ts = datetime.fromisoformat(ev["timestamp"])
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
-        entries.append((ts, dur, tier))
+        entries.append((ts, dur, tier, category, app, domain))
 
     return sorted(entries, key=lambda x: x[0])
 
@@ -109,7 +114,7 @@ def detect_sessions(
         absorbed_sec   = 0.0
         last_deep_end  = None
 
-    for ts, dur, tier in timeline:
+    for ts, dur, tier, *_ in timeline:
         end = ts + timedelta(seconds=dur)
 
         if tier == "deep":
@@ -155,7 +160,7 @@ def build_timeline(events: dict) -> list[str]:
     day_start = datetime(today_ist.year, today_ist.month, today_ist.day,
                          TIMELINE_START_H, 0, tzinfo=IST)
 
-    for ts, dur, tier in raw:
+    for ts, dur, tier, *_ in raw:
         ev_start = ts.astimezone(IST)
         ev_end   = ev_start + timedelta(seconds=dur)
         for i in range(bucket_count):
@@ -174,3 +179,32 @@ def build_timeline(events: dict) -> list[str]:
         else:
             result.append(max(bucket, key=bucket.get))
     return result
+
+
+def build_hourly_aggregates(events: dict) -> list[dict]:
+    """
+    Per-hour (IST) rollup: [{hour, tier, category, app, domain, minutes}].
+    Events spanning an hour boundary are split proportionally across hours.
+    """
+    raw = _tier_timeline(events)
+    agg: dict[tuple, float] = defaultdict(float)
+
+    for ts, dur, tier, category, app, domain in raw:
+        ev_start = ts.astimezone(IST)
+        ev_end   = ev_start + timedelta(seconds=dur)
+        cur = ev_start
+        while cur < ev_end:
+            hour_end = (cur.replace(minute=0, second=0, microsecond=0)
+                        + timedelta(hours=1))
+            seg_end = min(ev_end, hour_end)
+            seg_min = (seg_end - cur).total_seconds() / 60.0
+            if seg_min > 0:
+                agg[(cur.hour, tier, category, app, domain)] += seg_min
+            cur = seg_end
+
+    return [
+        {"hour": k[0], "tier": k[1], "category": k[2], "app": k[3], "domain": k[4],
+         "minutes": round(v, 2)}
+        for k, v in agg.items()
+        if v > 0.05
+    ]

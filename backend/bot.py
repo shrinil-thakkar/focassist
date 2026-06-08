@@ -3,6 +3,7 @@ Telegram bot: handles commands, sends nudges, answers data queries.
 Commands (v1):
   /plan   — plan tomorrow (or today)
   /today  — today's time breakdown
+  /hour <h>  — detailed app/site breakdown for a given hour (e.g. /hour 14)
   /report — latest weekly report
   /shift <block> <±mins>  — shift a time block
   /block_now <mins>       — start ad-hoc focus block
@@ -53,6 +54,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "Commands:\n"
         "/plan — plan tomorrow\n"
         "/today — today's activity\n"
+        "/hour <h> — hour breakdown (e.g. /hour 14)\n"
         "/report — weekly report\n"
         "/block\\_now <mins> — start a focus block\n"
         "/shift <label> <±mins> — move a time block\n"
@@ -66,6 +68,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "*FocAssist commands*\n\n"
         "/plan — plan tomorrow\n"
         "/today — today's activity breakdown\n"
+        "/hour `<h>` — hour breakdown (e.g. /hour 14)\n"
         "/report — weekly report\n"
         "/block\\_now `<mins>` `[domain ...]` — start a focus block\n"
         "/shift `<label>` `<±mins>` — move a time block\n"
@@ -100,6 +103,23 @@ async def cmd_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     streak_target = float(db.get_config("score_streak_target_min", "90"))
     msg = format_daily_report(today, aggregates, sessions, timeline,
                                prev_score, deep_target, streak_target)
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+async def cmd_hour(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    from backend.scoring import format_hour_report
+    args = ctx.args or []
+    if not args or not args[0].isdigit() or not (0 <= int(args[0]) <= 23):
+        await update.message.reply_text("Usage: /hour <0-23>  e.g. /hour 14")
+        return
+
+    hour = int(args[0])
+    today = today_date()
+    items     = [dict(r) for r in db.get_hourly_activity(today, hour)]
+    timeline  = db.get_timeline_for_date(today)
+    sessions  = [dict(r) for r in db.get_sessions_for_date(today)]
+
+    msg = format_hour_report(today, hour, items, timeline, sessions)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
@@ -278,6 +298,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("plan", cmd_plan))
     app.add_handler(CommandHandler("today", cmd_today))
+    app.add_handler(CommandHandler("hour", cmd_hour))
     app.add_handler(CommandHandler("report", cmd_report))
     app.add_handler(CommandHandler("shift", cmd_shift))
     app.add_handler(CommandHandler("block_now", cmd_block_now))

@@ -97,6 +97,17 @@ def init_db() -> None:
                 date    TEXT PRIMARY KEY,
                 buckets TEXT NOT NULL   -- JSON array of tier strings (15-min buckets)
             );
+
+            CREATE TABLE IF NOT EXISTS hourly_activity (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                date     TEXT NOT NULL,
+                hour     INTEGER NOT NULL,
+                tier     TEXT NOT NULL,
+                category TEXT NOT NULL,
+                app      TEXT NOT NULL,
+                domain   TEXT NOT NULL,
+                minutes  REAL NOT NULL
+            );
         """)
 
         # ── rules table — recreate if old schema (no tier/url_match support) ──
@@ -234,6 +245,26 @@ def upsert_activity(date: str, aggregates: list[dict]) -> None:
               a.get("category", "other"),
               a["app"], a["domain"], a["minutes"]) for a in aggregates],
         )
+
+
+def upsert_hourly_activity(date: str, hourly: list[dict]) -> None:
+    """Replace today's hourly activity rollup with fresh data."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM hourly_activity WHERE date = ?", (date,))
+        conn.executemany(
+            """INSERT INTO hourly_activity (date, hour, tier, category, app, domain, minutes)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            [(date, h["hour"], h["tier"], h["category"], h["app"], h["domain"], h["minutes"])
+             for h in hourly],
+        )
+
+
+def get_hourly_activity(date: str, hour: int) -> list[sqlite3.Row]:
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT * FROM hourly_activity WHERE date = ? AND hour = ? ORDER BY minutes DESC",
+            (date, hour),
+        ).fetchall()
 
 
 def upsert_sessions(date: str, sessions: list[dict]) -> None:

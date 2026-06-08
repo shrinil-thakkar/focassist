@@ -40,13 +40,14 @@ def run_cycle() -> None:
         events = {"window": [], "web": []}
 
     from agent.categorizer import categorize_events
-    from agent.session_detector import detect_sessions, build_timeline
+    from agent.session_detector import detect_sessions, build_timeline, build_hourly_aggregates
     aggregates, ambiguous = categorize_events(events)
     sessions = detect_sessions(events)
     timeline = build_timeline(events)
+    hourly = build_hourly_aggregates(events)
 
     # Push to backend
-    sync.push_aggregates(date.today(), aggregates, ambiguous, sessions, timeline)
+    sync.push_aggregates(date.today(), aggregates, ambiguous, sessions, timeline, hourly)
 
     # Act on directive
     directive = sync.get_directive()

@@ -46,8 +46,9 @@ def push_aggregates(
     ambiguous: list[dict],
     sessions: list[dict] | None = None,
     timeline: list[str] | None = None,
+    hourly: list[dict] | None = None,
 ) -> None:
-    """Push today's aggregates, sessions and timeline to the backend."""
+    """Push today's aggregates, sessions, timeline and hourly rollup to the backend."""
     if not BACKEND_URL:
         log.warning("FOCASSIST_BACKEND_URL not set — skipping push.")
         return
@@ -57,6 +58,7 @@ def push_aggregates(
         "ambiguous": ambiguous,
         "sessions": sessions or [],
         "timeline": timeline or [],
+        "hourly": hourly or [],
     }
     try:
         _post("/ingest", payload)

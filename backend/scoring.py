@@ -229,6 +229,70 @@ def format_daily_report(
     return "\n".join(lines)
 
 
+# ── Hour report ───────────────────────────────────────────────────────────────
+
+def format_hour_report(
+    for_date: str,
+    hour: int,
+    items: list,
+    timeline: list[str] | None = None,
+    sessions: list | None = None,
+) -> str:
+    """Detailed app/domain breakdown for a single hour of the day."""
+    if not items:
+        return f"No activity recorded for {_hour_label(hour)}–{_hour_label((hour + 1) % 24)} on {for_date}."
+
+    items = [dict(i) for i in items]
+    total = sum(i["minutes"] for i in items)
+
+    lines = [f"🕐 *{_hour_label(hour)} – {_hour_label((hour + 1) % 24)}*  ·  {for_date}"]
+    lines.append(f"Active {_fmt(total)}\n")
+
+    by_tier: dict[str, list] = {}
+    for i in items:
+        by_tier.setdefault(i["tier"], []).append(i)
+
+    for tier in ("deep", "supporting", "distraction", "neutral"):
+        tier_items = by_tier.get(tier)
+        if not tier_items:
+            continue
+        tier_total = sum(i["minutes"] for i in tier_items)
+        lines.append(f"{TIER_ICON[tier]} *{TIER_LABEL[tier]}*  —  {_fmt(tier_total)}")
+        for i in sorted(tier_items, key=lambda x: -x["minutes"]):
+            label = i["domain"] or i["app"]
+            lines.append(f"   {label:<28} {_fmt(i['minutes'])}")
+        lines.append("")
+
+    # 15-min strip for this hour
+    if timeline:
+        per_hour = 4
+        idx = (hour - 8) * per_hour
+        if 0 <= idx < len(timeline):
+            slice_ = timeline[idx: idx + per_hour]
+            emojis = "".join(TIER_ICON.get(t, "⬜") for t in slice_)
+            lines.append(f"`{_hour_label(hour)}` {emojis}")
+
+    # Focus sessions overlapping this hour
+    if sessions:
+        h_start = f"{hour:02d}:00"
+        h_end   = f"{(hour + 1) % 24:02d}:00"
+        overlapping = [
+            s for s in sessions
+            if (s["start"] if isinstance(s, dict) else s["start"]) < h_end
+            and (s["end"] if isinstance(s, dict) else s["end"]) > h_start
+        ]
+        if overlapping:
+            lines.append("🎯 *Focus session overlap*")
+            for s in overlapping:
+                s = s if isinstance(s, dict) else dict(s)
+                lines.append(
+                    f"   {_fmt_time(s['start'])} – {_fmt_time(s['end'])}  "
+                    f"({int(s['deep_minutes'])}m deep)"
+                )
+
+    return "\n".join(lines).rstrip()
+
+
 # ── Weekly report ─────────────────────────────────────────────────────────────
 
 def format_weekly_report(
