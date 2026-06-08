@@ -92,6 +92,7 @@ async def cmd_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     aggregates = [dict(r) for r in db.get_activity_for_date(today)]
     sessions   = [dict(r) for r in db.get_sessions_for_date(today)]
     timeline   = db.get_timeline_for_date(today)
+    coverage   = db.get_coverage(today)
 
     # Yesterday's score for trend arrow
     from backend.rules import ist_now
@@ -103,7 +104,7 @@ async def cmd_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     deep_target  = float(db.get_config("score_deep_target_min",   "240"))
     streak_target = float(db.get_config("score_streak_target_min", "90"))
     msg = format_daily_report(today, aggregates, sessions, timeline,
-                               prev_score, deep_target, streak_target)
+                               prev_score, deep_target, streak_target, coverage)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 

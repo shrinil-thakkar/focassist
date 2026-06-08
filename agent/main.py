@@ -40,14 +40,25 @@ def run_cycle() -> None:
         events = {"window": [], "web": []}
 
     from agent.categorizer import categorize_events
+    from agent.timeline import resolve_timeline, detect_flags
     from agent.session_detector import detect_sessions, build_timeline, build_hourly_aggregates
     aggregates, ambiguous = categorize_events(events)
-    sessions = detect_sessions(events)
-    timeline = build_timeline(events)
-    hourly = build_hourly_aggregates(events)
+
+    # Resolve once — sessions, the 15-min strip, and the hourly rollup all
+    # consume this single AFK-anchored pass (tracking-algorithm.md §9).
+    resolved = resolve_timeline(events)
+    sessions = detect_sessions(events, resolved=resolved)
+    timeline = build_timeline(events, resolved=resolved)
+    hourly = build_hourly_aggregates(events, resolved=resolved)
+    coverage = {
+        "active_minutes": resolved["active_minutes"],
+        "idle_minutes": resolved["idle_minutes"],
+        "untracked_minutes": resolved["untracked_minutes"],
+        "flags": detect_flags(resolved),
+    }
 
     # Push to backend
-    sync.push_aggregates(date.today(), aggregates, ambiguous, sessions, timeline, hourly)
+    sync.push_aggregates(date.today(), aggregates, ambiguous, sessions, timeline, hourly, coverage)
 
     # Act on directive
     directive = sync.get_directive()

@@ -1,10 +1,15 @@
 """
 Focus session detector — runs on the Mac agent (has raw AW event timestamps).
 
-Algorithm (from spec §3):
-  - Walk the day's tiered event timeline chronologically.
-  - Open a session at the first deep event.
-  - Absorb non-deep gaps < GAP_TOLERANCE_MIN (quick Slack glance etc.).
+Consumes the resolved timeline from agent.timeline.resolve_timeline (the AFK-anchored
+merge pipeline from docs/tracking-algorithm.md §2-3), so sessions, the 15-min report
+strip, and the hourly rollup all inherit the same active/idle/untracked correctness
+instead of re-deriving it from raw window events.
+
+Session algorithm (spec §3):
+  - Walk the day's resolved timeline chronologically.
+  - Open a session at the first deep interval.
+  - Absorb non-deep gaps < GAP_TOLERANCE_MIN (quick Slack glance, a blip of idle, etc.).
   - A non-deep gap >= GAP_TOLERANCE_MIN closes the session.
   - Session qualifies if span >= MIN_SESSION_MIN AND
     absorbed non-deep time <= MAX_ABSORBED_PCT of span.
@@ -12,8 +17,10 @@ Algorithm (from spec §3):
 Also produces a 15-min bucket timeline for the daily report strip.
 """
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+from agent.timeline import resolve_timeline
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -26,50 +33,8 @@ TIMELINE_START_H   = 8    # 08:00 IST
 TIMELINE_END_H     = 22   # 22:00 IST
 
 
-def _tier_timeline(events: dict) -> list[tuple[datetime, float, str, str, str, str]]:
-    """
-    Build a sorted list of (utc_start, duration_sec, tier, category, app, domain)
-    from raw AW events. Browser window events are skipped — web events are used
-    for browser time. Neutral events are included (needed for gap detection) but
-    won't open sessions.
-    """
-    from agent.categorizer import classify, BROWSER_APPS, _extract_domain
-
-    entries: list[tuple[datetime, float, str, str, str, str]] = []
-
-    for ev in events.get("window", []):
-        data = ev.get("data", {})
-        app  = data.get("app", "")
-        dur  = ev.get("duration", 0)
-        if dur < 1 or app in BROWSER_APPS:
-            continue
-        rule = classify(app, "", "")
-        tier = rule["tier"] if rule else "distraction"
-        category = rule["category"] if rule else "other"
-        ts = datetime.fromisoformat(ev["timestamp"])
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        entries.append((ts, dur, tier, category, app, ""))
-
-    for ev in events.get("web", []):
-        data   = ev.get("data", {})
-        url    = data.get("url", "")
-        dur    = ev.get("duration", 0)
-        if dur < 1:
-            continue
-        domain = _extract_domain(url)
-        if not domain or domain.startswith("chrome") or domain.startswith("about"):
-            continue
-        app = data.get("app", "Browser")
-        rule = classify(app, domain, url)
-        tier = rule["tier"] if rule else "distraction"
-        category = rule["category"] if rule else "browsing"
-        ts = datetime.fromisoformat(ev["timestamp"])
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        entries.append((ts, dur, tier, category, app, domain))
-
-    return sorted(entries, key=lambda x: x[0])
+def _resolved(events: dict, resolved: dict | None = None) -> dict:
+    return resolved if resolved is not None else resolve_timeline(events)
 
 
 def detect_sessions(
@@ -77,9 +42,10 @@ def detect_sessions(
     min_session_min: int = MIN_SESSION_MIN,
     gap_tolerance_min: int = GAP_TOLERANCE_MIN,
     max_absorbed_pct: float = MAX_ABSORBED_PCT,
+    resolved: dict | None = None,
 ) -> list[dict]:
     """Return list of qualified focus sessions in IST HH:MM."""
-    timeline = _tier_timeline(events)
+    timeline = _resolved(events, resolved)["timeline"]
     if not timeline:
         return []
 
@@ -114,8 +80,11 @@ def detect_sessions(
         absorbed_sec   = 0.0
         last_deep_end  = None
 
-    for ts, dur, tier, *_ in timeline:
-        end = ts + timedelta(seconds=dur)
+    for entry in timeline:
+        ts, end, tier = entry["start"], entry["end"], entry["tier"]
+        dur = (end - ts).total_seconds()
+        if dur <= 0:
+            continue
 
         if tier == "deep":
             if session_start is None:
@@ -146,13 +115,15 @@ def detect_sessions(
     return sessions
 
 
-def build_timeline(events: dict) -> list[str]:
+def build_timeline(events: dict, resolved: dict | None = None) -> list[str]:
     """
-    Return a list of tier strings, one per 15-min bucket, covering
+    Return a list of state/tier strings, one per 15-min bucket, covering
     TIMELINE_START_H to TIMELINE_END_H in IST.
-    Each bucket gets the tier of whichever event covers the most of that slot.
+    Each bucket gets whichever of {tier (active) | idle | untracked} covers the
+    most of that slot — idle and untracked are surfaced distinctly, never merged
+    or treated as zero (tracking-algorithm.md §1).
     """
-    raw = _tier_timeline(events)
+    timeline = _resolved(events, resolved)["timeline"]
     bucket_count = (TIMELINE_END_H - TIMELINE_START_H) * 60 // TIMELINE_BUCKET_MIN
     bucket_sec: list[dict[str, float]] = [dict() for _ in range(bucket_count)]
 
@@ -160,9 +131,10 @@ def build_timeline(events: dict) -> list[str]:
     day_start = datetime(today_ist.year, today_ist.month, today_ist.day,
                          TIMELINE_START_H, 0, tzinfo=IST)
 
-    for ts, dur, tier, *_ in raw:
-        ev_start = ts.astimezone(IST)
-        ev_end   = ev_start + timedelta(seconds=dur)
+    for entry in timeline:
+        ev_start = entry["start"].astimezone(IST)
+        ev_end   = entry["end"].astimezone(IST)
+        label    = entry["tier"]  # "deep"/"supporting"/"distraction"/"neutral"/"idle"/"untracked"
         for i in range(bucket_count):
             b_start = day_start + timedelta(minutes=i * TIMELINE_BUCKET_MIN)
             b_end   = b_start   + timedelta(minutes=TIMELINE_BUCKET_MIN)
@@ -170,28 +142,32 @@ def build_timeline(events: dict) -> list[str]:
             overlap_end   = min(ev_end,   b_end)
             overlap_sec   = (overlap_end - overlap_start).total_seconds()
             if overlap_sec > 0:
-                bucket_sec[i][tier] = bucket_sec[i].get(tier, 0) + overlap_sec
+                bucket_sec[i][label] = bucket_sec[i].get(label, 0) + overlap_sec
 
     result = []
     for bucket in bucket_sec:
         if not bucket:
-            result.append("idle")
+            result.append("untracked")
         else:
             result.append(max(bucket, key=bucket.get))
     return result
 
 
-def build_hourly_aggregates(events: dict) -> list[dict]:
+def build_hourly_aggregates(events: dict, resolved: dict | None = None) -> list[dict]:
     """
-    Per-hour (IST) rollup: [{hour, tier, category, app, domain, minutes}].
-    Events spanning an hour boundary are split proportionally across hours.
+    Per-hour (IST) rollup of *active* time only: [{hour, tier, category, app, domain, minutes}].
+    Events spanning an hour boundary are split proportionally across hours — the
+    same split must be used for the daily totals, the 15-min timeline, and here
+    (tracking-algorithm.md §7) so the three views always reconcile.
     """
-    raw = _tier_timeline(events)
+    timeline = _resolved(events, resolved)["timeline"]
     agg: dict[tuple, float] = defaultdict(float)
 
-    for ts, dur, tier, category, app, domain in raw:
-        ev_start = ts.astimezone(IST)
-        ev_end   = ev_start + timedelta(seconds=dur)
+    for entry in timeline:
+        if entry["state"] != "active":
+            continue
+        ev_start = entry["start"].astimezone(IST)
+        ev_end   = entry["end"].astimezone(IST)
         cur = ev_start
         while cur < ev_end:
             hour_end = (cur.replace(minute=0, second=0, microsecond=0)
@@ -199,7 +175,8 @@ def build_hourly_aggregates(events: dict) -> list[dict]:
             seg_end = min(ev_end, hour_end)
             seg_min = (seg_end - cur).total_seconds() / 60.0
             if seg_min > 0:
-                agg[(cur.hour, tier, category, app, domain)] += seg_min
+                key = (cur.hour, entry["tier"], entry["category"], entry["app"], entry["domain"])
+                agg[key] += seg_min
             cur = seg_end
 
     return [

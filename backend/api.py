@@ -55,6 +55,19 @@ class HourlyItem(BaseModel):
     minutes: float
 
 
+class CoverageFlag(BaseModel):
+    type: str
+    message: str
+
+
+class Coverage(BaseModel):
+    """Reconciliation totals from the AFK-anchored merge pipeline (tracking-algorithm.md §6)."""
+    active_minutes: float = 0
+    idle_minutes: float = 0
+    untracked_minutes: float = 0
+    flags: list[CoverageFlag] = []
+
+
 class IngestPayload(BaseModel):
     date: str
     aggregates: list[Aggregate]
@@ -62,6 +75,7 @@ class IngestPayload(BaseModel):
     sessions: list[Session] = []
     timeline: list[str] = []
     hourly_activity: list[HourlyItem] = []
+    coverage: Coverage | None = None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -76,6 +90,10 @@ def ingest(payload: IngestPayload, _=Depends(require_auth)):
         db.save_timeline(payload.date, payload.timeline)
     if payload.hourly_activity:
         db.upsert_hourly_activity(payload.date, [h.model_dump() for h in payload.hourly_activity])
+    if payload.coverage is not None:
+        c = payload.coverage
+        db.save_coverage(payload.date, c.active_minutes, c.idle_minutes,
+                         c.untracked_minutes, [f.model_dump() for f in c.flags])
     return {
         "status": "ok",
         "aggregates": len(payload.aggregates),

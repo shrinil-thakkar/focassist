@@ -20,10 +20,26 @@ class AmbiguousItem:
 
 
 @dataclass
+class CoverageFlag:
+    type: str
+    message: str
+
+
+@dataclass
+class Coverage:
+    """Reconciliation totals from the AFK-anchored merge pipeline (tracking-algorithm.md §6)."""
+    active_minutes: float
+    idle_minutes: float
+    untracked_minutes: float
+    flags: list[CoverageFlag] = field(default_factory=list)
+
+
+@dataclass
 class IngestPayload:
     date: str  # YYYY-MM-DD
     aggregates: list[ActivityAggregate]
     ambiguous: list[AmbiguousItem]
+    coverage: Optional[Coverage] = None
 
 
 @dataclass

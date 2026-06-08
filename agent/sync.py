@@ -47,8 +47,13 @@ def push_aggregates(
     sessions: list[dict] | None = None,
     timeline: list[str] | None = None,
     hourly: list[dict] | None = None,
+    coverage: dict | None = None,
 ) -> None:
-    """Push today's aggregates, sessions, timeline and hourly rollup to the backend."""
+    """
+    Push today's aggregates, sessions, timeline, hourly rollup and coverage
+    (active/idle/untracked totals + health flags, tracking-algorithm.md §5-6)
+    to the backend.
+    """
     if not BACKEND_URL:
         log.warning("FOCASSIST_BACKEND_URL not set — skipping push.")
         return
@@ -59,6 +64,7 @@ def push_aggregates(
         "sessions": sessions or [],
         "timeline": timeline or [],
         "hourly_activity": hourly or [],
+        "coverage": coverage,
     }
     try:
         _post("/ingest", payload)

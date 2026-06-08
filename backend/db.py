@@ -98,6 +98,14 @@ def init_db() -> None:
                 buckets TEXT NOT NULL   -- JSON array of tier strings (15-min buckets)
             );
 
+            CREATE TABLE IF NOT EXISTS daily_coverage (
+                date              TEXT PRIMARY KEY,
+                active_minutes    REAL NOT NULL DEFAULT 0,
+                idle_minutes      REAL NOT NULL DEFAULT 0,
+                untracked_minutes REAL NOT NULL DEFAULT 0,
+                flags             TEXT NOT NULL DEFAULT '[]'   -- JSON array of {type, message, ...}
+            );
+
             CREATE TABLE IF NOT EXISTS hourly_activity (
                 id       INTEGER PRIMARY KEY AUTOINCREMENT,
                 date     TEXT NOT NULL,
@@ -303,6 +311,43 @@ def get_timeline_for_date(date: str) -> list[str]:
             "SELECT buckets FROM daily_timeline WHERE date = ?", (date,)
         ).fetchone()
     return json.loads(row["buckets"]) if row else []
+
+
+def save_coverage(date: str, active_minutes: float, idle_minutes: float,
+                  untracked_minutes: float, flags: list[dict]) -> None:
+    """
+    Persist the day's active/idle/untracked reconciliation totals + health flags
+    (tracking-algorithm.md §6, §5) — the trust check behind 'tracked X; idle Y;
+    untracked Z' in the daily report.
+    """
+    import json
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO daily_coverage (date, active_minutes, idle_minutes, untracked_minutes, flags)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(date) DO UPDATE SET
+                 active_minutes=excluded.active_minutes,
+                 idle_minutes=excluded.idle_minutes,
+                 untracked_minutes=excluded.untracked_minutes,
+                 flags=excluded.flags""",
+            (date, active_minutes, idle_minutes, untracked_minutes, json.dumps(flags)),
+        )
+
+
+def get_coverage(date: str) -> dict | None:
+    import json
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM daily_coverage WHERE date = ?", (date,)
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "active_minutes": row["active_minutes"],
+        "idle_minutes": row["idle_minutes"],
+        "untracked_minutes": row["untracked_minutes"],
+        "flags": json.loads(row["flags"]),
+    }
 
 
 def insert_ambiguous(items: list[dict]) -> None:

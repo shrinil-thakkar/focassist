@@ -158,6 +158,7 @@ async def _daily_report(send) -> None:
     aggregates = [dict(r) for r in db.get_activity_for_date(today)]
     sessions   = [dict(r) for r in db.get_sessions_for_date(today)]
     timeline   = db.get_timeline_for_date(today)
+    coverage   = db.get_coverage(today)
 
     prev_aggs = [dict(r) for r in db.get_activity_for_date(yesterday)]
     prev_sess = [dict(r) for r in db.get_sessions_for_date(yesterday)]
@@ -167,7 +168,7 @@ async def _daily_report(send) -> None:
     streak_target = float(db.get_config("score_streak_target_min", "90"))
 
     msg = format_daily_report(today, aggregates, sessions, timeline,
-                               prev_score, deep_target, streak_target)
+                               prev_score, deep_target, streak_target, coverage)
     await send(msg, "Markdown")
 
 

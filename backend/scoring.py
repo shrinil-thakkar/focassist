@@ -10,7 +10,8 @@ from datetime import date, timedelta
 
 # ── Tier helpers ──────────────────────────────────────────────────────────────
 
-TIER_ICON  = {"deep": "🟩", "supporting": "🟦", "distraction": "🟥", "neutral": "⬜", "idle": "⬜"}
+TIER_ICON  = {"deep": "🟩", "supporting": "🟦", "distraction": "🟥", "neutral": "⬜",
+              "idle": "⬜", "untracked": "⬛"}
 TIER_LABEL = {"deep": "Deep", "supporting": "Supporting", "distraction": "Distraction", "neutral": "Neutral"}
 
 
@@ -91,14 +92,15 @@ def _timeline_strip(buckets: list[str], start_h: int = 8, bucket_min: int = 15) 
     per_hour = 60 // bucket_min
     n_hours  = len(buckets) // per_hour
 
+    _BLANK = ("idle", "neutral", "untracked")
     first_active = next(
         (h for h in range(n_hours)
-         if any(b not in ("idle", "neutral") for b in buckets[h*per_hour:(h+1)*per_hour])),
+         if any(b not in _BLANK for b in buckets[h*per_hour:(h+1)*per_hour])),
         None,
     )
     last_active = next(
         (h for h in range(n_hours - 1, -1, -1)
-         if any(b not in ("idle", "neutral") for b in buckets[h*per_hour:(h+1)*per_hour])),
+         if any(b not in _BLANK for b in buckets[h*per_hour:(h+1)*per_hour])),
         None,
     )
     if first_active is None:
@@ -144,6 +146,7 @@ def format_daily_report(
     prev_score: int | None = None,
     deep_target_min: float = 240,
     streak_target_min: float = 90,
+    coverage: dict | None = None,
 ) -> str:
     if not aggregates and not sessions:
         return f"No activity recorded for {for_date} yet."
@@ -174,7 +177,20 @@ def format_daily_report(
         date_label = for_date
 
     lines = [f"📊 *Focus Score: {m['score']}/100*{trend}"]
-    lines.append(f"🗓 {date_label} · active {_fmt(active)}\n")
+    lines.append(f"🗓 {date_label} · active {_fmt(active)}")
+
+    # ── Reconciliation line — the trust check (tracking-algorithm.md §6) ─────
+    # active + idle + untracked must equal elapsed wall-clock; surface all three
+    # so a half-tracked day reads as half-tracked, never as a quiet/lazy one.
+    if coverage:
+        lines.append(
+            f"   tracked {_fmt(coverage.get('active_minutes', 0))} · "
+            f"idle {_fmt(coverage.get('idle_minutes', 0))} · "
+            f"untracked {_fmt(coverage.get('untracked_minutes', 0))}"
+        )
+        for flag in coverage.get("flags", []):
+            lines.append(f"   ⚠️ {flag.get('message', flag.get('type', ''))}")
+    lines.append("")
 
     # Tier breakdown (no inline extras — dedicated sections below)
     for tier in ("deep", "supporting", "distraction", "neutral"):
@@ -249,7 +265,19 @@ def format_hour_report(
     header  = f"🕐 *{h_start}–{h_end}*  ·  {for_date}{so_far}"
 
     if not items:
-        return f"{header}\n\nNothing tracked {h_start}–{h_end} — idle or laptop closed."
+        # Distinguish idle (laptop on, away) from untracked (asleep/crashed/no
+        # data) — §1's cardinal rule: never merge them, never read either as zero.
+        label = "idle or laptop closed"
+        if timeline:
+            per_hour = 4
+            idx = (hour - 8) * per_hour
+            if 0 <= idx < len(timeline):
+                slice_ = timeline[idx: idx + per_hour]
+                if slice_ and all(s == "untracked" for s in slice_):
+                    label = "untracked — asleep, watcher down, or no data"
+                elif slice_ and all(s in ("idle", "untracked") for s in slice_):
+                    label = "idle/untracked — away from the laptop"
+        return f"{header}\n\nNothing tracked {h_start}–{h_end} — {label}."
 
     items = [dict(i) for i in items]
 

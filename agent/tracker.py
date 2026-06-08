@@ -45,8 +45,11 @@ def _bucket_id(hostname: str, bucket_type: str) -> str | None:
 
 def fetch_events(target_date: date | None = None) -> dict:
     """
-    Fetch today's (or target_date's) window-watcher and web-watcher events.
-    Returns {"window": [...], "web": [...]} raw AW event dicts.
+    Fetch today's (or target_date's) AFK, window-watcher and web-watcher events.
+    Returns {"afk": [...], "window": [...], "web": [...]} raw AW event dicts.
+
+    AFK is the master clock (see docs/tracking-algorithm.md §2) — it is fetched
+    first and is the only bucket whose absence is fatal to honest accounting.
     """
     if target_date is None:
         target_date = date.today()
@@ -58,11 +61,19 @@ def fetch_events(target_date: date | None = None) -> dict:
     end = datetime(target_date.year, target_date.month, target_date.day,
                    23, 59, 59, tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    afk_bucket = _bucket_id(hostname, "aw-watcher-afk")
     window_bucket = _bucket_id(hostname, "aw-watcher-window")
     web_bucket = _bucket_id(hostname, "aw-watcher-web")
 
+    afk_events = []
     window_events = []
     web_events = []
+
+    if afk_bucket:
+        result = _get(f"/api/0/buckets/{afk_bucket}/events?start={start}&end={end}&limit=10000")
+        afk_events = result if isinstance(result, list) else []
+    else:
+        log.warning("No AFK-watcher bucket found — active/idle/untracked split will be unreliable.")
 
     if window_bucket:
         result = _get(f"/api/0/buckets/{window_bucket}/events?start={start}&end={end}&limit=10000")
@@ -74,7 +85,7 @@ def fetch_events(target_date: date | None = None) -> dict:
         result = _get(f"/api/0/buckets/{web_bucket}/events?start={start}&end={end}&limit=10000")
         web_events = result if isinstance(result, list) else []
 
-    return {"window": window_events, "web": web_events}
+    return {"afk": afk_events, "window": window_events, "web": web_events}
 
 
 def compute_aggregates(events: dict) -> tuple[list[dict], list[dict]]:
