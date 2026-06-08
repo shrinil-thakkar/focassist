@@ -65,14 +65,32 @@ def compute_score(
 
 # ── Timeline strip ────────────────────────────────────────────────────────────
 
+def _hour_label(h: int) -> str:
+    """Convert 24h integer to 12h label: 14 → '2pm', 9 → '9am'."""
+    if h == 0:   return "12am"
+    if h < 12:   return f"{h}am"
+    if h == 12:  return "12pm"
+    return f"{h - 12}pm"
+
+
+def _fmt_time(hhmm: str) -> str:
+    """Convert HH:MM to 12h format: '14:30' → '2:30pm', '09:00' → '9am'."""
+    try:
+        h, m = map(int, hhmm.split(":"))
+        period = "am" if h < 12 else "pm"
+        h12 = h % 12 or 12
+        return f"{h12}:{m:02d}{period}" if m else f"{h12}{period}"
+    except Exception:
+        return hhmm
+
+
 def _timeline_strip(buckets: list[str], start_h: int = 8, bucket_min: int = 15) -> str:
-    """Render 15-min buckets per hour, trimming leading/trailing idle hours."""
+    """Render 15-min buckets per hour with 12h labels, trimming idle hours."""
     if not buckets:
         return ""
     per_hour = 60 // bucket_min
-    n_hours = len(buckets) // per_hour
+    n_hours  = len(buckets) // per_hour
 
-    # Find first and last hour that has any non-idle bucket
     first_active = next(
         (h for h in range(n_hours)
          if any(b not in ("idle", "neutral") for b in buckets[h*per_hour:(h+1)*per_hour])),
@@ -83,67 +101,30 @@ def _timeline_strip(buckets: list[str], start_h: int = 8, bucket_min: int = 15) 
          if any(b not in ("idle", "neutral") for b in buckets[h*per_hour:(h+1)*per_hour])),
         None,
     )
-
     if first_active is None:
-        return "No activity yet today."
+        return ""
 
     chunks = []
     for hour_idx in range(first_active, last_active + 1):
-        hour = start_h + hour_idx
+        hour   = start_h + hour_idx
         slice_ = buckets[hour_idx * per_hour: (hour_idx + 1) * per_hour]
         emojis = "".join(TIER_ICON.get(t, "⬜") for t in slice_)
-        chunks.append(f"`{hour:02d}` {emojis}")
+        chunks.append(f"`{_hour_label(hour)}` {emojis}")
     return "\n".join(chunks)
 
 
-# ── Coaching insights ─────────────────────────────────────────────────────────
-
-def _top_distraction(aggregates: list) -> str | None:
-    dist = [(a["domain"] or a["app"], a["minutes"])
-            for a in aggregates
-            if (a["tier"] if isinstance(a, dict) else a["tier"]) == "distraction"
-            and (a["domain"] if isinstance(a, dict) else a["domain"])]
-    if not dist:
-        return None
-    top = max(dist, key=lambda x: x[1])
-    return f"{top[0]} ({_fmt(top[1])})"
-
-
-def _coaching(metrics: dict, aggregates: list, sessions: list, prev_score: int | None) -> list[str]:
-    insights = []
-
-    if prev_score is not None:
-        delta = metrics["score"] - prev_score
-        if delta >= 10:
-            insights.append(f"▲ {delta} pts vs yesterday — solid improvement.")
-        elif delta <= -10:
-            insights.append(f"▼ {abs(delta)} pts vs yesterday. More deep work tomorrow.")
-
-    deep_agg = sum(
-        (a["minutes"] if isinstance(a, dict) else a["minutes"])
-        for a in aggregates
-        if (a["tier"] if isinstance(a, dict) else a["tier"]) == "deep"
-    )
-    if metrics["session_count"] == 0 and deep_agg >= 10:
-        insights.append(
-            f"{_fmt(deep_agg)} deep work done, but no single block ≥25 min — "
-            f"score stays low until focus is sustained. Try fewer interruptions."
-        )
-    elif metrics["session_count"] == 0:
-        insights.append("No focus sessions — try a 25-min uninterrupted deep block.")
-    elif metrics["longest_session_minutes"] >= 90:
-        insights.append(f"Strong {int(metrics['longest_session_minutes'])}m focus streak — protect that block.")
-    elif metrics["longest_session_minutes"] < 30 and metrics["session_count"] > 0:
-        insights.append("Sessions stayed short — fewer interruptions = longer streaks.")
-
-    if metrics["active_minutes"] > 0:
-        dist_pct = metrics["distraction_minutes"] / metrics["active_minutes"]
-        if dist_pct > 0.5:
-            top = _top_distraction(aggregates)
-            culprit = f" ({top} was the main culprit)" if top else ""
-            insights.append(f"High distraction day{culprit}.")
-
-    return insights[:2]
+def _top_distractions(aggregates: list, n: int = 3) -> list[tuple[str, float]]:
+    """Return top-n (label, minutes) distraction items, rolled up by domain/app."""
+    totals: dict[str, float] = {}
+    for a in aggregates:
+        if (a["tier"] if isinstance(a, dict) else a["tier"]) != "distraction":
+            continue
+        label = (a["domain"] if isinstance(a, dict) else a["domain"]) or \
+                (a["app"]    if isinstance(a, dict) else a["app"])
+        if label:
+            totals[label] = totals.get(label, 0) + \
+                            (a["minutes"] if isinstance(a, dict) else a["minutes"])
+    return sorted(totals.items(), key=lambda x: -x[1])[:n]
 
 
 # ── Daily report ──────────────────────────────────────────────────────────────
@@ -188,33 +169,54 @@ def format_daily_report(
     lines = [f"📊 *Focus Score: {m['score']}/100*{trend}"]
     lines.append(f"🗓 {date_label} · active {_fmt(active)}\n")
 
-    # Tier breakdown
-    top_dist = _top_distraction(aggregates)
+    # Tier breakdown (no inline extras — dedicated sections below)
     for tier in ("deep", "supporting", "distraction", "neutral"):
         mins = totals.get(tier, 0)
-        extra = ""
-        if tier == "deep" and sessions:
-            extra = f"   {m['session_count']} session{'s' if m['session_count'] != 1 else ''} · longest {int(m['longest_session_minutes'])}m"
-        elif tier == "distraction" and mins > 0 and top_dist:
-            extra = f"   {top_dist}"
         if mins > 0:
-            lines.append(f"{TIER_ICON[tier]} {TIER_LABEL[tier]:<12} {_fmt(mins)}{extra}")
+            lines.append(f"{TIER_ICON[tier]} {TIER_LABEL[tier]:<12} {_fmt(mins)}")
         elif tier not in ("neutral", "supporting"):
             lines.append(f"{TIER_ICON[tier]} {TIER_LABEL[tier]:<12} —")
 
-    # Timeline strip (label-free, trimmed to active hours)
+    # Timeline strip
     if timeline:
         strip = _timeline_strip(timeline)
         if strip:
             lines.append("")
             lines.append(strip)
 
-    # Coaching
-    insights = _coaching(m, aggregates, sessions, prev_score)
-    if insights:
+    # ── Focus sessions section ────────────────────────────────────────────────
+    lines.append("")
+    n_sess = m["session_count"]
+    deep_agg = totals.get("deep", 0)
+
+    if n_sess > 0:
+        total_deep_sess = sum(
+            (s["deep_minutes"] if isinstance(s, dict) else s["deep_minutes"])
+            for s in sessions
+        )
+        best = max(sessions,
+                   key=lambda s: (s["span_minutes"] if isinstance(s, dict) else s["span_minutes"]))
+        best = best if isinstance(best, dict) else dict(best)
+        lines.append(
+            f"🎯 *Focus sessions: {n_sess}*  ·  {_fmt(total_deep_sess)} deep"
+        )
+        lines.append(
+            f"   Best: {_fmt_time(best['start'])} – {_fmt_time(best['end'])}  "
+            f"({int(best['span_minutes'])}m)"
+        )
+    elif deep_agg >= 5:
+        lines.append(f"🎯 *Focus sessions: 0*")
+        lines.append(f"   {_fmt(deep_agg)} deep done — fragmented, no 25-min block")
+    else:
+        lines.append("🎯 *Focus sessions: 0*  — no deep work recorded")
+
+    # ── Top distractions section ──────────────────────────────────────────────
+    top3 = _top_distractions(aggregates, 3)
+    if top3:
         lines.append("")
-        for ins in insights:
-            lines.append(f"💡 {ins}")
+        lines.append("📛 *Top distractions*")
+        for label, mins in top3:
+            lines.append(f"   {label:<28} {_fmt(mins)}")
 
     return "\n".join(lines)
 
