@@ -113,11 +113,11 @@ def _timeline_strip(buckets: list[str], start_h: int = 8, bucket_min: int = 15) 
     return "\n".join(chunks)
 
 
-def _top_distractions(aggregates: list, n: int = 3) -> list[tuple[str, float]]:
-    """Return top-n (label, minutes) distraction items, rolled up by domain/app."""
+def _top_items(aggregates: list, tier: str, n: int = 3) -> list[tuple[str, float]]:
+    """Return top-n (label, minutes) items for a tier, rolled up by domain/app."""
     totals: dict[str, float] = {}
     for a in aggregates:
-        if (a["tier"] if isinstance(a, dict) else a["tier"]) != "distraction":
+        if (a["tier"] if isinstance(a, dict) else a["tier"]) != tier:
             continue
         label = (a["domain"] if isinstance(a, dict) else a["domain"]) or \
                 (a["app"]    if isinstance(a, dict) else a["app"])
@@ -125,6 +125,13 @@ def _top_distractions(aggregates: list, n: int = 3) -> list[tuple[str, float]]:
             totals[label] = totals.get(label, 0) + \
                             (a["minutes"] if isinstance(a, dict) else a["minutes"])
     return sorted(totals.items(), key=lambda x: -x[1])[:n]
+
+
+TIER_SECTION_TITLE = {
+    "deep":        "Top deep work",
+    "supporting":  "Top supporting",
+    "distraction": "Top distractions",
+}
 
 
 # ── Daily report ──────────────────────────────────────────────────────────────
@@ -210,13 +217,14 @@ def format_daily_report(
     else:
         lines.append("🎯 *Focus sessions: 0*  — no deep work recorded")
 
-    # ── Top distractions section ──────────────────────────────────────────────
-    top3 = _top_distractions(aggregates, 3)
-    if top3:
-        lines.append("")
-        lines.append("📛 *Top distractions*")
-        for label, mins in top3:
-            lines.append(f"   {label:<28} {_fmt(mins)}")
+    # ── Top items per tier ────────────────────────────────────────────────────
+    for tier in ("deep", "supporting", "distraction"):
+        top3 = _top_items(aggregates, tier, 3)
+        if top3:
+            lines.append("")
+            lines.append(f"{TIER_ICON[tier]} *{TIER_SECTION_TITLE[tier]}*")
+            for label, mins in top3:
+                lines.append(f"   {label:<28} {_fmt(mins)}")
 
     return "\n".join(lines)
 
