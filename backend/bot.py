@@ -12,6 +12,7 @@ Commands (v1):
 """
 import logging
 import os
+import re
 from datetime import date, datetime, timedelta, timezone
 from telegram import Update
 from telegram.ext import (
@@ -106,20 +107,50 @@ async def cmd_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
+_HOUR_RE = re.compile(r"^(\d{1,2})\s*(am|pm)?$", re.IGNORECASE)
+
+
+def _parse_hour(text: str) -> int | None:
+    """Parse '14', '2pm', '9am', '9' → 0-23, or None if invalid."""
+    m = _HOUR_RE.match(text.strip())
+    if not m:
+        return None
+    h = int(m.group(1))
+    period = (m.group(2) or "").lower()
+    if period:
+        if not (1 <= h <= 12):
+            return None
+        if period == "am":
+            return 0 if h == 12 else h
+        return 12 if h == 12 else h + 12
+    return h if 0 <= h <= 23 else None
+
+
 async def cmd_hour(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     from backend.scoring import format_hour_report
+    from backend.rules import ist_now
+    now = ist_now()
     args = ctx.args or []
-    if not args or not args[0].isdigit() or not (0 <= int(args[0]) <= 23):
-        await update.message.reply_text("Usage: /hour <0-23>  e.g. /hour 14")
+
+    if not args or args[0].lower() == "now":
+        hour = now.hour
+    else:
+        hour = _parse_hour(args[0])
+        if hour is None:
+            await update.message.reply_text("Give me an hour 0–23 (or like `2pm`).", parse_mode="Markdown")
+            return
+
+    if hour > now.hour:
+        await update.message.reply_text("That hour hasn't happened yet.")
         return
 
-    hour = int(args[0])
     today = today_date()
     items     = [dict(r) for r in db.get_hourly_activity(today, hour)]
     timeline  = db.get_timeline_for_date(today)
     sessions  = [dict(r) for r in db.get_sessions_for_date(today)]
 
-    msg = format_hour_report(today, hour, items, timeline, sessions)
+    elapsed = (now.minute + now.second / 60.0) if hour == now.hour else None
+    msg = format_hour_report(today, hour, items, timeline, sessions, elapsed)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 

@@ -61,7 +61,7 @@ class IngestPayload(BaseModel):
     ambiguous: list[AmbiguousItem]
     sessions: list[Session] = []
     timeline: list[str] = []
-    hourly: list[HourlyItem] = []
+    hourly_activity: list[HourlyItem] = []
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -74,8 +74,8 @@ def ingest(payload: IngestPayload, _=Depends(require_auth)):
         db.upsert_sessions(payload.date, [s.model_dump() for s in payload.sessions])
     if payload.timeline:
         db.save_timeline(payload.date, payload.timeline)
-    if payload.hourly:
-        db.upsert_hourly_activity(payload.date, [h.model_dump() for h in payload.hourly])
+    if payload.hourly_activity:
+        db.upsert_hourly_activity(payload.date, [h.model_dump() for h in payload.hourly_activity])
     return {
         "status": "ok",
         "aggregates": len(payload.aggregates),

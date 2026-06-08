@@ -237,31 +237,34 @@ def format_hour_report(
     items: list,
     timeline: list[str] | None = None,
     sessions: list | None = None,
+    elapsed_min: float | None = None,
 ) -> str:
-    """Detailed app/domain breakdown for a single hour of the day."""
+    """
+    Detailed app/site breakdown for a single hour of the day.
+    `elapsed_min` is set only for the current (partial) hour — minutes since :00.
+    """
+    h_start = f"{hour:02d}:00"
+    h_end   = f"{(hour + 1) % 24:02d}:00"
+    so_far  = "  (so far)" if elapsed_min is not None else ""
+    header  = f"🕐 *{h_start}–{h_end}*  ·  {for_date}{so_far}"
+
     if not items:
-        return f"No activity recorded for {_hour_label(hour)}–{_hour_label((hour + 1) % 24)} on {for_date}."
+        return f"{header}\n\nNothing tracked {h_start}–{h_end} — idle or laptop closed."
 
     items = [dict(i) for i in items]
-    total = sum(i["minutes"] for i in items)
 
-    lines = [f"🕐 *{_hour_label(hour)} – {_hour_label((hour + 1) % 24)}*  ·  {for_date}"]
-    lines.append(f"Active {_fmt(total)}\n")
-
-    by_tier: dict[str, list] = {}
+    tier_totals = {t: 0.0 for t in ("deep", "supporting", "distraction", "neutral")}
     for i in items:
-        by_tier.setdefault(i["tier"], []).append(i)
+        tier_totals[i["tier"]] = tier_totals.get(i["tier"], 0.0) + i["minutes"]
+    accounted = sum(tier_totals.values())
 
+    lines = [header, ""]
     for tier in ("deep", "supporting", "distraction", "neutral"):
-        tier_items = by_tier.get(tier)
-        if not tier_items:
-            continue
-        tier_total = sum(i["minutes"] for i in tier_items)
-        lines.append(f"{TIER_ICON[tier]} *{TIER_LABEL[tier]}*  —  {_fmt(tier_total)}")
-        for i in sorted(tier_items, key=lambda x: -x["minutes"]):
-            label = i["domain"] or i["app"]
-            lines.append(f"   {label:<28} {_fmt(i['minutes'])}")
-        lines.append("")
+        lines.append(f"{TIER_ICON[tier]} {TIER_LABEL[tier]:<12} {_fmt(tier_totals[tier])}")
+    if elapsed_min is not None:
+        lines.append(f"{int(accounted)}m accounted of {int(elapsed_min)}m elapsed")
+    else:
+        lines.append(f"{int(accounted)}m accounted")
 
     # 15-min strip for this hour
     if timeline:
@@ -270,27 +273,29 @@ def format_hour_report(
         if 0 <= idx < len(timeline):
             slice_ = timeline[idx: idx + per_hour]
             emojis = "".join(TIER_ICON.get(t, "⬜") for t in slice_)
-            lines.append(f"`{_hour_label(hour)}` {emojis}")
+            lines.append("")
+            lines.append(f"15-min: {emojis}")
 
-    # Focus sessions overlapping this hour
+    # Flat by-app/site list, tier-emoji prefixed (same name may legitimately
+    # appear under multiple tiers — e.g. a whitelisted path on a domain).
+    lines.append("")
+    lines.append("By app/site")
+    for i in sorted(items, key=lambda x: -x["minutes"]):
+        label = i["domain"] or i["app"]
+        lines.append(f"{TIER_ICON[i['tier']]} {label:<24} {_fmt(i['minutes'])}")
+
+    # Overlapping focus session
     if sessions:
-        h_start = f"{hour:02d}:00"
-        h_end   = f"{(hour + 1) % 24:02d}:00"
-        overlapping = [
-            s for s in sessions
-            if (s["start"] if isinstance(s, dict) else s["start"]) < h_end
-            and (s["end"] if isinstance(s, dict) else s["end"]) > h_start
-        ]
-        if overlapping:
-            lines.append("🎯 *Focus session overlap*")
-            for s in overlapping:
-                s = s if isinstance(s, dict) else dict(s)
+        for s in sessions:
+            s = s if isinstance(s, dict) else dict(s)
+            if s["start"] < h_end and s["end"] > h_start:
+                lines.append("")
                 lines.append(
-                    f"   {_fmt_time(s['start'])} – {_fmt_time(s['end'])}  "
-                    f"({int(s['deep_minutes'])}m deep)"
+                    f"⏱ Focus session {s['start']}–{s['end']} overlaps this hour (deep ✓)"
                 )
+                break
 
-    return "\n".join(lines).rstrip()
+    return "\n".join(lines)
 
 
 # ── Weekly report ─────────────────────────────────────────────────────────────

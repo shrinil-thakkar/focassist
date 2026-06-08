@@ -58,7 +58,7 @@ def push_aggregates(
         "ambiguous": ambiguous,
         "sessions": sessions or [],
         "timeline": timeline or [],
-        "hourly": hourly or [],
+        "hourly_activity": hourly or [],
     }
     try:
         _post("/ingest", payload)
