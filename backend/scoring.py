@@ -256,18 +256,12 @@ def format_hour_report(
     tier_totals = {t: 0.0 for t in ("deep", "supporting", "distraction", "neutral")}
     for i in items:
         tier_totals[i["tier"]] = tier_totals.get(i["tier"], 0.0) + i["minutes"]
-    accounted = sum(tier_totals.values())
 
     lines = [header, ""]
     for tier in ("deep", "supporting", "distraction", "neutral"):
         lines.append(f"{TIER_ICON[tier]} {TIER_LABEL[tier]:<12} {_fmt(tier_totals[tier])}")
     if elapsed_min is not None:
-        # Window + web watchers run independently and can report overlapping
-        # spans, so "tracked" isn't bounded by wall-clock elapsed — show both
-        # without implying one caps the other.
-        lines.append(f"{int(accounted)}m tracked  ·  {int(elapsed_min)}m into the hour")
-    else:
-        lines.append(f"{int(accounted)}m tracked")
+        lines.append(f"{int(elapsed_min)}m into the hour")
 
     # 15-min strip for this hour
     if timeline:
