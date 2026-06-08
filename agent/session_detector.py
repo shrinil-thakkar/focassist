@@ -30,7 +30,7 @@ GAP_TOLERANCE_MIN  = 5
 MAX_ABSORBED_PCT   = 0.20
 TIMELINE_BUCKET_MIN = 15
 TIMELINE_START_H   = 8    # 08:00 IST
-TIMELINE_END_H     = 22   # 22:00 IST
+TIMELINE_END_H     = 24   # through midnight (24:00 IST) — last bucket label is "11pm"
 
 
 def _resolved(events: dict, resolved: dict | None = None) -> dict:
