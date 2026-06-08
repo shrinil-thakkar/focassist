@@ -177,19 +177,22 @@ def format_daily_report(
         date_label = for_date
 
     lines = [f"📊 *Focus Score: {m['score']}/100*{trend}"]
-    lines.append(f"🗓 {date_label} · active {_fmt(active)}")
 
-    # ── Reconciliation line — the trust check (tracking-algorithm.md §6) ─────
-    # active + idle + untracked must equal elapsed wall-clock; surface all three
-    # so a half-tracked day reads as half-tracked, never as a quiet/lazy one.
+    # ── Headline + reconciliation (the trust check, tracking-algorithm.md §6) ──
+    # active + idle + untracked must equal elapsed wall-clock; fold all three
+    # into one line — using the same icons as the strip below — so a
+    # half-tracked day reads as half-tracked, never as a quiet/lazy one.
     if coverage:
         lines.append(
-            f"   tracked {_fmt(coverage.get('active_minutes', 0))} · "
-            f"idle {_fmt(coverage.get('idle_minutes', 0))} · "
-            f"untracked {_fmt(coverage.get('untracked_minutes', 0))}"
+            f"🗓 {date_label}\n"
+            f"🟩 active {_fmt(active)}"
+            f"   ⬜ idle {_fmt(coverage.get('idle_minutes', 0))}"
+            f"   ⬛ untracked {_fmt(coverage.get('untracked_minutes', 0))}"
         )
         for flag in coverage.get("flags", []):
-            lines.append(f"   ⚠️ {flag.get('message', flag.get('type', ''))}")
+            lines.append(f"⚠️ {flag.get('message', flag.get('type', ''))}")
+    else:
+        lines.append(f"🗓 {date_label} · active {_fmt(active)}")
     lines.append("")
 
     # Tier breakdown (no inline extras — dedicated sections below)
