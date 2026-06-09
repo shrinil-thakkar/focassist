@@ -16,10 +16,6 @@ BROWSER_APPS = {
     "Google Chrome", "Chrome", "Chromium",
     "Firefox", "Safari", "Microsoft Edge",
     "Opera", "Brave Browser", "Arc",
-    # Chrome PWAs — ActivityWatch reports these as separate app names but they
-    # are browser windows and must be overridden by web events, not treated as
-    # native apps (otherwise the domain entry and the PWA entry both appear).
-    "Telegram Web", "WhatsApp Web",
 }
 
 # Seed rules — backend rules loaded at runtime take priority.
@@ -94,6 +90,7 @@ SEED_RULES: list[dict] = [
     {"match_type": "app", "match_value": "Telegram",           "tier": "supporting", "category": "comms"},
     {"match_type": "app", "match_value": "Telegram Web",       "tier": "supporting", "category": "comms"},
     {"match_type": "domain", "match_value": "web.telegram.org","tier": "supporting", "category": "comms"},
+    {"match_type": "app", "match_value": "Titan",              "tier": "supporting", "category": "email"},
     # ── Distraction — video ───────────────────────────────────────────────────
     {"match_type": "domain", "match_value": "youtube.com",     "tier": "distraction", "category": "video"},
     {"match_type": "domain", "match_value": "netflix.com",     "tier": "distraction", "category": "video"},

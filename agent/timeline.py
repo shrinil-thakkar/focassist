@@ -24,8 +24,10 @@ DEFAULT_CONFIG = {
     # max continuous passive-engagement override; excess reverts to idle
     "override_cap_minutes": 45,
     # anything focused that looks like a browser but isn't here → flagged (§5)
-    # Include Chrome PWA names so their segments get browser-override treatment.
-    "browser_app_names": ["Google Chrome", "Google Chrome Canary", "Telegram Web", "WhatsApp Web"],
+    # Chrome PWAs (Telegram Web, Titan, etc.) are NOT listed here — the web extension
+    # cannot inject into PWA windows, so they would always be browser-unlabeled.
+    # They are classified directly by app name via categorizer rules instead.
+    "browser_app_names": ["Google Chrome", "Google Chrome Canary"],
     # Chrome-focused URL coverage below this over a rolling window → flag (§5)
     "url_coverage_flag_threshold": 0.5,
 }
