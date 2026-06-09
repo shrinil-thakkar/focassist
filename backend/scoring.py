@@ -143,7 +143,7 @@ def _top_items(aggregates: list, tier: str, n: int = 3) -> list[tuple[str, float
         label = a["domain"] or a["app"]
         if label:
             totals[label] = totals.get(label, 0) + a["minutes"]
-    return sorted(totals.items(), key=lambda x: -x[1])[:n]
+    return [(lbl, mins) for lbl, mins in sorted(totals.items(), key=lambda x: -x[1]) if mins >= 1.0][:n]
 
 
 TIER_SECTION_TITLE = {

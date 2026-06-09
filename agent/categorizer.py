@@ -16,6 +16,10 @@ BROWSER_APPS = {
     "Google Chrome", "Chrome", "Chromium",
     "Firefox", "Safari", "Microsoft Edge",
     "Opera", "Brave Browser", "Arc",
+    # Chrome PWAs — ActivityWatch reports these as separate app names but they
+    # are browser windows and must be overridden by web events, not treated as
+    # native apps (otherwise the domain entry and the PWA entry both appear).
+    "Telegram Web", "WhatsApp Web",
 }
 
 # Seed rules — backend rules loaded at runtime take priority.
