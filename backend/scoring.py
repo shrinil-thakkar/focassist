@@ -364,6 +364,14 @@ def format_hour_report(
 
     items = [dict(i) for i in items]
 
+    # Pre-compute the timeline slice for this hour (used for idle/untracked totals and the strip)
+    h_slice: list[str] = []
+    if timeline:
+        per_hour = 4
+        idx = (hour - 8) * per_hour
+        if 0 <= idx < len(timeline):
+            h_slice = timeline[idx: idx + per_hour]
+
     tier_totals = {t: 0.0 for t in ("deep", "supporting", "distraction", "neutral")}
     for i in items:
         tier_totals[i["tier"]] = tier_totals.get(i["tier"], 0.0) + i["minutes"]
@@ -371,18 +379,22 @@ def format_hour_report(
     lines = [header, ""]
     for tier in ("deep", "supporting", "distraction", "neutral"):
         lines.append(f"{TIER_ICON[tier]} {TIER_LABEL[tier]:<12} {_fmt(tier_totals[tier])}")
+    # §6: surface idle + untracked so active + idle + untracked = elapsed wall-clock
+    if h_slice:
+        idle_min = sum(15.0 for s in h_slice if s == "idle")
+        untracked_min = sum(15.0 for s in h_slice if s == "untracked")
+        if idle_min > 0:
+            lines.append(f"⬜ {'Idle':<12} {_fmt(idle_min)}")
+        if untracked_min > 0:
+            lines.append(f"⬛ {'Untracked':<12} {_fmt(untracked_min)}")
     if elapsed_min is not None:
         lines.append(f"{int(elapsed_min)}m into the hour")
 
     # 15-min strip for this hour
-    if timeline:
-        per_hour = 4
-        idx = (hour - 8) * per_hour
-        if 0 <= idx < len(timeline):
-            slice_ = timeline[idx: idx + per_hour]
-            emojis = "".join(TIER_ICON.get(t, "⬜") for t in slice_)
-            lines.append("")
-            lines.append(f"15-min: {emojis}")
+    if h_slice:
+        emojis = "".join(TIER_ICON.get(t, "⬜") for t in h_slice)
+        lines.append("")
+        lines.append(f"15-min: {emojis}")
 
     # Flat by-app/site list, tier-emoji prefixed (same name may legitimately
     # appear under multiple tiers — e.g. a whitelisted path on a domain).
