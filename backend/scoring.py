@@ -253,6 +253,16 @@ def format_daily_report(
         lines.append(f"🟩 active    {_fmt(active):>7}")
         lines.append(f"⬜ idle      {_fmt(idle_min):>7}   away from laptop")
         lines.append(f"⬛ untracked {_fmt(untracked_min):>7}   asleep / closed")
+        cov_active = coverage.get("active_minutes", active)
+        wall_clock_min = cov_active + idle_min + untracked_min
+        if wall_clock_min > 0:
+            tracked_pct = round((cov_active + idle_min) / wall_clock_min * 100)
+            unlabeled_min = sum(
+                a["minutes"] for a in aggregates
+                if a["category"] == "browser-unlabeled"
+            )
+            conf_pct = round((1 - unlabeled_min / max(active, 1)) * 100)
+            lines.append(f"   {tracked_pct}% tracked · {conf_pct}% labeled")
     else:
         lines.append(f"🟩 active    {_fmt(active):>7}")
     lines.append(DIVIDER)
