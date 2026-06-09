@@ -403,7 +403,10 @@ def format_hour_report(
     for i in sorted(items, key=lambda x: -x["minutes"]):
         if i["minutes"] < 1.0:
             continue
-        label = i["domain"] or i["app"]
+        if i.get("category") == "browser-unlabeled":
+            label = f"{i['app']} (no URL)"
+        else:
+            label = i["domain"] or i["app"]
         lines.append(f"{TIER_ICON[i['tier']]} {label:<24} {_fmt(i['minutes'])}")
 
     # Overlapping focus session
