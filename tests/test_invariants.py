@@ -420,13 +420,22 @@ class I7BrowserSingleSourceTests(unittest.TestCase):
 
 
 class I8CoverageDefinitionTests(unittest.TestCase):
-    """I8: url_coverage = extension-sourced URLs / total Chrome time (title-derived names excluded)."""
+    """
+    I8: url_coverage uses only real extension-sourced URLs (not title-derived).
+
+    Decision tree (docs/chrome-no-url-decision-tree-prompt.md):
+      Branch 2 — chrome://, chrome-extension://, about: → neutral/system, not
+                  counted in the coverage denominator.
+      Branch 4 — extension genuinely down: warn only when real-browsing Chrome
+                  time >= liveness_min_minutes AND coverage < threshold.
+    """
 
     def setUp(self):
         load_rules()
 
     def test_extension_down_gives_zero_coverage(self):
-        """Chrome active + title says 'GitHub' but no web events → coverage = 0%, not inflated."""
+        """Chrome 30 min, no web events, title says GitHub → 0% coverage, flag fires.
+        Title is never used to derive domain (I8 invariant preserved)."""
         start, end = T0, T0 + timedelta(minutes=30)
         events = {
             "afk": [_afk(0, 30, "not-afk")],
@@ -437,10 +446,10 @@ class I8CoverageDefinitionTests(unittest.TestCase):
         flags = detect_flags(resolved)
 
         flag = next((f for f in flags if f["type"] == "chrome_unlabeled"), None)
-        self.assertIsNotNone(flag, "I8: No chrome_unlabeled flag when extension is down")
+        self.assertIsNotNone(flag, "I8: No flag when extension is down (30m exceeds liveness threshold)")
         coverage = flag.get("coverage", 1.0)
         self.assertAlmostEqual(coverage, 0.0, delta=0.01,
-                               msg=f"I8: Coverage {coverage:.1%} — title-derived labels are being counted")
+                               msg=f"I8: Coverage {coverage:.1%} — title-derived labels counted")
 
     def test_extension_up_gives_full_coverage(self):
         """Chrome + matching web events → 100% coverage, no chrome_unlabeled flag."""
@@ -454,27 +463,10 @@ class I8CoverageDefinitionTests(unittest.TestCase):
         flags = detect_flags(resolved)
 
         flag = next((f for f in flags if f["type"] == "chrome_unlabeled"), None)
-        self.assertIsNone(flag, f"I8: Unexpected chrome_unlabeled flag at 100% coverage: {flag}")
-
-    def test_below_threshold_fires_flag(self):
-        """Chrome 30 min, extension covers only 10 min → 33% coverage → flag fires."""
-        start, end = T0, T0 + timedelta(minutes=30)
-        events = {
-            "afk": [_afk(0, 30, "not-afk")],
-            "window": [_win(0, 30, "Google Chrome")],
-            "web": [_web(0, 10, "https://github.com/me/repo")],
-        }
-        resolved = resolve_timeline(events, range_start=start, range_end=end)
-        flags = detect_flags(resolved)
-
-        flag = next((f for f in flags if f["type"] == "chrome_unlabeled"), None)
-        self.assertIsNotNone(flag, "I8: No chrome_unlabeled flag at ~33% coverage")
-        coverage = flag.get("coverage", 1.0)
-        self.assertAlmostEqual(coverage, 1 / 3, delta=0.05,
-                               msg=f"I8: Coverage {coverage:.2f} ≠ expected ~0.33")
+        self.assertIsNone(flag, f"I8: Unexpected flag at 100% coverage: {flag}")
 
     def test_above_threshold_no_flag(self):
-        """Chrome 30 min, extension covers 20 min → 67% coverage → flag must not fire."""
+        """Chrome 30 min, extension covers 20 min → 67% coverage → no flag."""
         start, end = T0, T0 + timedelta(minutes=30)
         events = {
             "afk": [_afk(0, 30, "not-afk")],
@@ -485,8 +477,77 @@ class I8CoverageDefinitionTests(unittest.TestCase):
         flags = detect_flags(resolved)
 
         flag = next((f for f in flags if f["type"] == "chrome_unlabeled"), None)
+        self.assertIsNone(flag, f"I8: Flag fired at 67% (above 50% threshold): {flag}")
+
+    def test_below_threshold_fires_flag(self):
+        """Chrome 30 min, extension covers only 10 min → ~33% coverage → flag fires."""
+        start, end = T0, T0 + timedelta(minutes=30)
+        events = {
+            "afk": [_afk(0, 30, "not-afk")],
+            "window": [_win(0, 30, "Google Chrome")],
+            "web": [_web(0, 10, "https://github.com/me/repo")],
+        }
+        resolved = resolve_timeline(events, range_start=start, range_end=end)
+        flags = detect_flags(resolved)
+
+        flag = next((f for f in flags if f["type"] == "chrome_unlabeled"), None)
+        self.assertIsNotNone(flag, "I8: No flag at ~33% coverage")
+        coverage = flag.get("coverage", 1.0)
+        self.assertAlmostEqual(coverage, 1 / 3, delta=0.05,
+                               msg=f"I8: Coverage {coverage:.2f} ≠ expected ~0.33")
+
+    def test_chrome_internal_pages_become_neutral(self):
+        """Branch 2: chrome://newtab/ → neutral/system, not browser-unlabeled, no flag."""
+        start, end = T0, T0 + timedelta(minutes=30)
+        events = {
+            "afk": [_afk(0, 30, "not-afk")],
+            "window": [_win(0, 30, "Google Chrome")],
+            "web": [_web(0, 30, "chrome://newtab/")],
+        }
+        resolved = resolve_timeline(events, range_start=start, range_end=end)
+        active = [iv for iv in resolved["timeline"] if iv["state"] == "active"]
+
+        self.assertFalse(any(iv.get("category") == "browser-unlabeled" for iv in active),
+                         "I8: chrome://newtab/ classified as browser-unlabeled, should be neutral")
+        self.assertTrue(any(iv["tier"] == "neutral" for iv in active),
+                        "I8: chrome://newtab/ not classified as neutral")
+
+        flags = detect_flags(resolved)
+        flag = next((f for f in flags if f["type"] == "chrome_unlabeled"), None)
+        self.assertIsNone(flag, "I8: Flag fired for chrome:// internal page time")
+
+    def test_internal_pages_excluded_from_coverage_denominator(self):
+        """chrome:// time excluded from real-browsing denominator; small real gap below liveness → no flag."""
+        start, end = T0, T0 + timedelta(minutes=30)
+        events = {
+            "afk": [_afk(0, 30, "not-afk")],
+            "window": [_win(0, 30, "Google Chrome")],
+            "web": [
+                _web(0, 20, "chrome://newtab/"),           # internal → neutral
+                _web(20, 10, "https://github.com/me/repo"), # real but < 20m liveness threshold
+            ],
+        }
+        resolved = resolve_timeline(events, range_start=start, range_end=end)
+        flags = detect_flags(resolved)
+
+        flag = next((f for f in flags if f["type"] == "chrome_unlabeled"), None)
         self.assertIsNone(flag,
-                          f"I8: chrome_unlabeled fired at 67% coverage (above 50% threshold): {flag}")
+                          "I8: Flag fired when real browsing time is below liveness threshold")
+
+    def test_below_liveness_threshold_no_flag(self):
+        """Branch 4 liveness gate: <20 min real Chrome browsing → no warning even if all unlabeled."""
+        start, end = T0, T0 + timedelta(minutes=15)
+        events = {
+            "afk": [_afk(0, 15, "not-afk")],
+            "window": [_win(0, 15, "Google Chrome")],
+            "web": [],
+        }
+        resolved = resolve_timeline(events, range_start=start, range_end=end)
+        flags = detect_flags(resolved)
+
+        flag = next((f for f in flags if f["type"] == "chrome_unlabeled"), None)
+        self.assertIsNone(flag,
+                          "I8: Flag fired with only 15m Chrome time (below 20m liveness threshold)")
 
 
 if __name__ == "__main__":

@@ -30,6 +30,14 @@ DEFAULT_CONFIG = {
     "browser_app_names": ["Google Chrome", "Google Chrome Canary"],
     # Chrome-focused URL coverage below this over a rolling window → flag (§5)
     "url_coverage_flag_threshold": 0.5,
+    # URL scheme prefixes that map to neutral/system rather than browser-unlabeled.
+    # aw-watcher-web reports these via the tabs API (Step-0 "good case"); classify
+    # them as neutral so they don't inflate distraction or trigger coverage warnings.
+    "neutral_url_schemes": ["chrome://", "chrome-extension://", "about:"],
+    # Minimum minutes of *real* (non-internal) Chrome browsing before the
+    # chrome_unlabeled warning can fire.  A day heavy on chrome:// / new-tab time
+    # but light on actual browsing must not trip the extension-down alert.
+    "liveness_min_minutes": 20,
 }
 
 _UNTRACKED_TIER = "untracked"
@@ -137,25 +145,42 @@ def _classify_web(app: str, domain: str, url: str) -> tuple[str, str]:
 def _apply_browser_override(segments: list[dict], web_events: list[dict], cfg: dict) -> list[dict]:
     """
     Where the focused app is a browser, replace "Google Chrome" with the
-    domain-level web event for that interval. Portions of browser focus with no
-    matching web event become `browser-unlabeled` (flagged in §5, never silently
-    folded into the default distraction bucket).
+    domain-level web event for that interval.
+
+    Internal Chrome pages (chrome://, chrome-extension://, about:) are classified
+    as neutral/system — aw-watcher-web reports them via the tabs API and they are
+    expected, not a sign of a dead extension.
+
+    Portions of browser focus with no matching web event at all become
+    `browser-unlabeled` (only genuine real-browsing gaps; flagged in §5).
     """
     from agent.categorizer import _extract_domain
 
     browser_names = set(cfg["browser_app_names"])
-    web_spans = []
+    neutral_schemes = tuple(cfg.get("neutral_url_schemes",
+                                    ["chrome://", "chrome-extension://", "about:"]))
+
+    web_spans: list[tuple] = []      # (start, end, w_app, domain, url) — real tab URLs
+    internal_spans: list[tuple] = [] # (start, end) — chrome://, about: → neutral
+
     for ev in web_events:
         data = ev.get("data", {})
         url = data.get("url", "")
-        domain = _extract_domain(url)
-        if not domain or domain.startswith("chrome") or domain.startswith("about"):
+        if not url:
             continue
         start, end = _span(ev)
         if end <= start:
             continue
+        if url.startswith(neutral_schemes):
+            internal_spans.append((start, end))
+            continue
+        domain = _extract_domain(url)
+        if not domain:
+            continue
         web_spans.append((start, end, data.get("app", "Browser"), domain, url))
+
     web_spans.sort(key=lambda s: s[0])
+    internal_spans.sort(key=lambda s: s[0])
 
     out = []
     for seg in segments:
@@ -165,6 +190,7 @@ def _apply_browser_override(segments: list[dict], web_events: list[dict], cfg: d
 
         s_start, s_end = seg["start"], seg["end"]
         covered: list[tuple] = []
+
         for w_start, w_end, w_app, domain, url in web_spans:
             ov = _overlap(s_start, s_end, w_start, w_end)
             if not ov:
@@ -174,6 +200,17 @@ def _apply_browser_override(segments: list[dict], web_events: list[dict], cfg: d
                 "start": ov[0], "end": ov[1],
                 "state": "active", "tier": tier, "category": category,
                 "app": w_app, "domain": domain,
+            })
+            covered.append(ov)
+
+        for i_start, i_end in internal_spans:
+            ov = _overlap(s_start, s_end, i_start, i_end)
+            if not ov:
+                continue
+            out.append({
+                "start": ov[0], "end": ov[1],
+                "state": "active", "tier": "neutral", "category": "system",
+                "app": seg["app"], "domain": "",
             })
             covered.append(ov)
 
@@ -399,13 +436,23 @@ def detect_flags(result: dict, config: dict | None = None,
     active = [iv for iv in timeline if iv["state"] == "active"]
 
     browser_names = set(cfg["browser_app_names"])
-    chrome_total = sum((iv["end"] - iv["start"]).total_seconds()
-                       for iv in active if iv["app"] in browser_names)
+    liveness_min = cfg.get("liveness_min_minutes", 20)
+
+    # Exclude neutral Chrome intervals (chrome://, new-tab, etc.) from the
+    # coverage denominator — those are expected gaps, not extension failures.
+    chrome_real_sec = sum(
+        (iv["end"] - iv["start"]).total_seconds()
+        for iv in active
+        if iv["app"] in browser_names and iv["tier"] != "neutral"
+    )
     chrome_unlabeled = sum((iv["end"] - iv["start"]).total_seconds()
                            for iv in active if iv["category"] == "browser-unlabeled")
-    if chrome_total > 0:
-        coverage = 1 - (chrome_unlabeled / chrome_total)
-        if coverage < cfg["url_coverage_flag_threshold"]:
+    if chrome_real_sec > 0:
+        coverage = 1 - (chrome_unlabeled / chrome_real_sec)
+        # Only warn when real browsing time is substantial AND most of it is unlabeled.
+        # Prevents false positives on days heavy with chrome:// / new-tab time.
+        if (chrome_real_sec / 60 >= liveness_min
+                and coverage < cfg["url_coverage_flag_threshold"]):
             flags.append({
                 "type": "chrome_unlabeled",
                 "message": (f"Chrome URL coverage is {coverage:.0%} "

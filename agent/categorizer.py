@@ -91,6 +91,11 @@ SEED_RULES: list[dict] = [
     {"match_type": "app", "match_value": "Telegram Web",       "tier": "supporting", "category": "comms"},
     {"match_type": "domain", "match_value": "web.telegram.org","tier": "supporting", "category": "comms"},
     {"match_type": "app", "match_value": "Titan",              "tier": "supporting", "category": "email"},
+    # ── PWA apps — tier must match their web-tab counterpart ─────────────────
+    {"match_type": "app", "match_value": "Gmail",              "tier": "supporting", "category": "comms"},
+    {"match_type": "app", "match_value": "Google Calendar",    "tier": "supporting", "category": "planning"},
+    {"match_type": "app", "match_value": "WhatsApp Web",       "tier": "distraction", "category": "social"},
+    {"match_type": "domain", "match_value": "web.whatsapp.com","tier": "distraction", "category": "social"},
     # ── Distraction — video ───────────────────────────────────────────────────
     {"match_type": "domain", "match_value": "youtube.com",     "tier": "distraction", "category": "video"},
     {"match_type": "domain", "match_value": "netflix.com",     "tier": "distraction", "category": "video"},
