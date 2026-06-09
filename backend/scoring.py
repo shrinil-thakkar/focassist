@@ -389,6 +389,8 @@ def format_hour_report(
     lines.append("")
     lines.append("By app/site")
     for i in sorted(items, key=lambda x: -x["minutes"]):
+        if i["minutes"] < 1.0:
+            continue
         label = i["domain"] or i["app"]
         lines.append(f"{TIER_ICON[i['tier']]} {label:<24} {_fmt(i['minutes'])}")
 
