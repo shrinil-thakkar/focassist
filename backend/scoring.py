@@ -143,7 +143,7 @@ def _top_items(aggregates: list, tier: str, n: int = 3) -> list[tuple[str, float
         a = a if isinstance(a, dict) else dict(a)
         if a["tier"] != tier:
             continue
-        if a.get("category") == "browser-unlabeled":
+        if a.get("category") == "browser-unknown":
             continue
         label = a["domain"] or a["app"]
         if label:
@@ -257,12 +257,13 @@ def format_daily_report(
         wall_clock_min = cov_active + idle_min + untracked_min
         if wall_clock_min > 0:
             tracked_pct = round((cov_active + idle_min) / wall_clock_min * 100)
-            unlabeled_min = sum(
+            unknown_min = sum(
                 a["minutes"] for a in aggregates
-                if a["category"] == "browser-unlabeled"
+                if a["category"] == "browser-unknown"
             )
-            conf_pct = round((1 - unlabeled_min / max(active, 1)) * 100)
-            lines.append(f"   {tracked_pct}% tracked · {conf_pct}% labeled")
+            conf_pct = round((1 - unknown_min / max(active, 1)) * 100)
+            note = f" (~{round(unknown_min, 0):.0f}m unknown)" if unknown_min >= 1 else ""
+            lines.append(f"   {tracked_pct}% tracked · {conf_pct}% labeled{note}")
     else:
         lines.append(f"🟩 active    {_fmt(active):>7}")
     lines.append(DIVIDER)
@@ -421,7 +422,7 @@ def format_hour_report(
     for i in sorted(items, key=lambda x: -x["minutes"]):
         if i["minutes"] < 1.0:
             continue
-        if i.get("category") == "browser-unlabeled":
+        if i.get("category") == "browser-unknown":
             label = f"{i['app']} (no URL)"
         else:
             label = i["domain"] or i["app"]

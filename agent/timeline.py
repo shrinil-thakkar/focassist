@@ -10,6 +10,7 @@ Sessions, the 15-min report timeline, and hourly aggregates all consume this
 output so they inherit correctness instead of each re-deriving the AFK split
 (see §9 — this is the highest-priority correctness fix).
 """
+import re
 from datetime import datetime, timedelta, timezone
 
 DEFAULT_CONFIG = {
@@ -38,6 +39,24 @@ DEFAULT_CONFIG = {
     # chrome_unlabeled warning can fire.  A day heavy on chrome:// / new-tab time
     # but light on actual browsing must not trip the extension-down alert.
     "liveness_min_minutes": 20,
+    # Minimum seconds a Chrome window-focus span must last to be treated as real
+    # browsing. Shorter spans are "flickers" from app-switch noise → neutral.
+    "min_dwell_seconds": 3,
+    # Unambiguous page-title substrings → domain. Only add patterns where the
+    # suffix cannot appear in unrelated page titles (localization risk).
+    # Patterns matched against the Chrome-suffix-stripped title.
+    # Keep only brand-name substrings that cannot appear on unrelated pages.
+    "title_to_domain": {
+        "YouTube":       "youtube.com",
+        "Gmail":         "mail.google.com",
+        "GitHub":        "github.com",
+        "Stack Overflow":"stackoverflow.com",
+        "Google Docs":   "docs.google.com",
+        " - Claude":     "claude.ai",
+    },
+    # Minimum minutes of browser-unknown (genuinely unclassifiable) residue before
+    # the coverage warning fires.
+    "unknown_warn_minutes": 5,
 }
 
 _UNTRACKED_TIER = "untracked"
@@ -101,6 +120,25 @@ def partition_afk(afk_events: list[dict], range_start: datetime, range_end: date
 
 # ── §2 step 2 — window ∩ not-afk → active-app timeline ───────────────────────
 
+# Strips "… - Google Chrome" / "… – Google Chrome – Profile N" from window titles.
+_CHROME_SUFFIX_RE = re.compile(r'\s*[-–]\s*Google Chrome(?:\s*[-–].*)?$')
+
+
+def _title_domain(title: str, cfg: dict) -> str | None:
+    """
+    Return a domain matched from a Chrome window title, or None if no
+    confident pattern fires.  Strips the macOS Chrome suffix first, then
+    checks cfg['title_to_domain'] substring patterns against the remainder.
+    """
+    if not title:
+        return None
+    clean = _CHROME_SUFFIX_RE.sub('', title).strip()
+    for pattern, domain in cfg.get("title_to_domain", {}).items():
+        if pattern in clean:
+            return domain
+    return None
+
+
 def _classify_app(app: str) -> tuple[str, str]:
     from agent.categorizer import classify
     rule = classify(app, "", "")
@@ -127,6 +165,7 @@ def _active_app_segments(window_events: list[dict], not_afk: list[tuple]) -> lis
                 "start": ov[0], "end": ov[1],
                 "state": "active", "tier": tier, "category": category,
                 "app": app, "domain": "",
+                "title": data.get("title", ""),
             })
     segments.sort(key=lambda s: s["start"])
     return segments
@@ -159,6 +198,7 @@ def _apply_browser_override(segments: list[dict], web_events: list[dict], cfg: d
     browser_names = set(cfg["browser_app_names"])
     neutral_schemes = tuple(cfg.get("neutral_url_schemes",
                                     ["chrome://", "chrome-extension://", "about:"]))
+    min_dwell_sec = cfg.get("min_dwell_seconds", 3)
 
     web_spans: list[tuple] = []      # (start, end, w_app, domain, url) — real tab URLs
     internal_spans: list[tuple] = [] # (start, end) — chrome://, about: → neutral
@@ -189,6 +229,7 @@ def _apply_browser_override(segments: list[dict], web_events: list[dict], cfg: d
             continue
 
         s_start, s_end = seg["start"], seg["end"]
+        title = seg.get("title", "")
         covered: list[tuple] = []
 
         for w_start, w_end, w_app, domain, url in web_spans:
@@ -215,11 +256,34 @@ def _apply_browser_override(segments: list[dict], web_events: list[dict], cfg: d
             covered.append(ov)
 
         for gap_start, gap_end in _gaps(s_start, s_end, covered):
-            out.append({
-                "start": gap_start, "end": gap_end,
-                "state": "active", "tier": "distraction", "category": "browser-unlabeled",
-                "app": seg["app"], "domain": "",
-            })
+            gap_sec = (gap_end - gap_start).total_seconds()
+            if gap_sec < min_dwell_sec:
+                # Population 1 — flicker: Chrome focused for a beat during an
+                # app/tab switch. Absorb as neutral; do not count as browsing.
+                out.append({
+                    "start": gap_start, "end": gap_end,
+                    "state": "active", "tier": "neutral", "category": "system",
+                    "app": seg["app"], "domain": "",
+                })
+            else:
+                # Population 2 — sustained gap: extension dropped a live tab.
+                # Try the window title as a fallback classification.
+                domain = _title_domain(title, cfg)
+                if domain:
+                    tier, category = _classify_web("Browser", domain, "")
+                    out.append({
+                        "start": gap_start, "end": gap_end,
+                        "state": "active", "tier": tier, "category": category,
+                        "app": "Browser", "domain": domain,
+                        "label_source": "title",
+                    })
+                else:
+                    # No confident title match — honestly unknown.
+                    out.append({
+                        "start": gap_start, "end": gap_end,
+                        "state": "active", "tier": "distraction", "category": "browser-unknown",
+                        "app": seg["app"], "domain": "",
+                    })
 
     out.sort(key=lambda s: s["start"])
     return out
@@ -435,32 +499,21 @@ def detect_flags(result: dict, config: dict | None = None,
     timeline = result.get("timeline", [])
     active = [iv for iv in timeline if iv["state"] == "active"]
 
-    browser_names = set(cfg["browser_app_names"])
-    liveness_min = cfg.get("liveness_min_minutes", 20)
+    unknown_warn_min = cfg.get("unknown_warn_minutes", 5)
 
-    # Exclude neutral Chrome intervals (chrome://, new-tab, etc.) from the
-    # coverage denominator — those are expected gaps, not extension failures.
-    chrome_real_sec = sum(
+    # browser-unknown = sustained Chrome focus where neither the extension nor the
+    # window title could identify the page. Warn when this residue is substantial.
+    unknown_sec = sum(
         (iv["end"] - iv["start"]).total_seconds()
-        for iv in active
-        if iv["app"] in browser_names and iv["tier"] != "neutral"
+        for iv in active if iv.get("category") == "browser-unknown"
     )
-    chrome_unlabeled = sum((iv["end"] - iv["start"]).total_seconds()
-                           for iv in active if iv["category"] == "browser-unlabeled")
-    if chrome_real_sec > 0:
-        coverage = 1 - (chrome_unlabeled / chrome_real_sec)
-        # Only warn when real browsing time is substantial AND most of it is unlabeled.
-        # Prevents false positives on days heavy with chrome:// / new-tab time.
-        if (chrome_real_sec / 60 >= liveness_min
-                and coverage < cfg["url_coverage_flag_threshold"]):
-            flags.append({
-                "type": "chrome_unlabeled",
-                "message": (f"Chrome URL coverage is {coverage:.0%} "
-                            f"({round(chrome_unlabeled / 60, 1)}m unlabeled) — "
-                            "is the aw-watcher-web-chrome extension running?"),
-                "coverage": round(coverage, 3),
-                "unlabeled_minutes": round(chrome_unlabeled / 60, 1),
-            })
+    if unknown_sec / 60 >= unknown_warn_min:
+        flags.append({
+            "type": "chrome_unlabeled",
+            "message": (f"Chrome extension missed ~{round(unknown_sec / 60, 1)}m of browsing "
+                        "— some categories estimated from window titles."),
+            "unlabeled_minutes": round(unknown_sec / 60, 1),
+        })
 
     non_chrome_sec = sum((iv["end"] - iv["start"]).total_seconds()
                          for iv in active if iv["app"] in _NON_CHROME_BROWSERS)
