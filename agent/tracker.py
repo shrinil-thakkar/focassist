@@ -56,10 +56,15 @@ def fetch_events(target_date: date | None = None) -> dict:
 
     hostname = AW_HOSTNAME or _detect_hostname()
 
+    # Use IST-aligned day boundaries so the report matches the IST calendar day.
+    # IST midnight = UTC 18:30 previous day; querying UTC-midnight would miss the
+    # first 5.5 hours of the IST day.
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo("Asia/Kolkata")
     start = datetime(target_date.year, target_date.month, target_date.day,
-                     tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                     0, 0, 0, tzinfo=IST).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     end = datetime(target_date.year, target_date.month, target_date.day,
-                   23, 59, 59, tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                   23, 59, 59, tzinfo=IST).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     afk_bucket = _bucket_id(hostname, "aw-watcher-afk")
     window_bucket = _bucket_id(hostname, "aw-watcher-window")

@@ -115,7 +115,8 @@ def detect_sessions(
     return sessions
 
 
-def build_timeline(events: dict, resolved: dict | None = None) -> list[str]:
+def build_timeline(events: dict, resolved: dict | None = None,
+                   target_date: "date | None" = None) -> list[str]:
     """
     Return a list of state/tier strings, one per 15-min bucket, covering
     TIMELINE_START_H to TIMELINE_END_H in IST.
@@ -123,12 +124,13 @@ def build_timeline(events: dict, resolved: dict | None = None) -> list[str]:
     most of that slot — idle and untracked are surfaced distinctly, never merged
     or treated as zero (tracking-algorithm.md §1).
     """
+    from datetime import date as _date
     timeline = _resolved(events, resolved)["timeline"]
     bucket_count = (TIMELINE_END_H - TIMELINE_START_H) * 60 // TIMELINE_BUCKET_MIN
     bucket_sec: list[dict[str, float]] = [dict() for _ in range(bucket_count)]
 
-    today_ist = datetime.now(IST).date()
-    day_start = datetime(today_ist.year, today_ist.month, today_ist.day,
+    ref_date = target_date if target_date is not None else datetime.now(IST).date()
+    day_start = datetime(ref_date.year, ref_date.month, ref_date.day,
                          TIMELINE_START_H, 0, tzinfo=IST)
 
     for entry in timeline:

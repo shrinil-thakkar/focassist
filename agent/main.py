@@ -46,7 +46,7 @@ def _run_pipeline(target_date: date) -> None:
     aggregates = build_daily_aggregates(events, resolved=resolved)
     _, ambiguous = categorize_events(events)
     sessions = detect_sessions(events, resolved=resolved)
-    timeline = build_timeline(events, resolved=resolved)
+    timeline = build_timeline(events, resolved=resolved, target_date=target_date)
     hourly = build_hourly_aggregates(events, resolved=resolved)
 
     first_tracked_ist = None
