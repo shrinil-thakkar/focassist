@@ -125,6 +125,11 @@ def _timeline_strip(buckets: list[str], start_h: int = 8, bucket_min: int = 15) 
     for hour_idx in range(first_active, last_active + 1):
         hour   = start_h + hour_idx
         slice_ = buckets[hour_idx * per_hour: (hour_idx + 1) * per_hour]
+        # Strip trailing future buckets within the current (partial) hour
+        while slice_ and slice_[-1] == "future":
+            slice_ = slice_[:-1]
+        if not slice_:
+            continue
         emojis = "".join(TIER_ICON.get(t, "⬜") for t in slice_)
         chunks.append(f"{_hour_label(hour):>4} {emojis}")
     return "\n".join(chunks)
