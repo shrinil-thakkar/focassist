@@ -2,7 +2,7 @@
 Telegram bot: handles commands, sends nudges, answers data queries.
 Commands (v1):
   /plan   — plan tomorrow (or today)
-  /today  — today's time breakdown
+  /day [yesterday|YYYY-MM-DD]  — daily time breakdown
   /hour <h>  — detailed app/site breakdown for a given hour (e.g. /hour 14)
   /report — latest weekly report
   /shift <block> <±mins>  — shift a time block
@@ -54,7 +54,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         f"Your chat ID: `{chat_id}`\n\n"
         "Commands:\n"
         "/plan — plan tomorrow\n"
-        "/today — today's activity\n"
+        "/day — today's activity  (or /day yesterday)\n"
         "/hour <h> — hour breakdown (e.g. /hour 14)\n"
         "/report — weekly report\n"
         "/block\\_now <mins> — start a focus block\n"
@@ -68,7 +68,8 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "*FocAssist commands*\n\n"
         "/plan — plan tomorrow\n"
-        "/today — today's activity breakdown\n"
+        "/day — today's activity breakdown\n"
+        "/day `yesterday` or `/day 2026-06-09` — past day\n"
         "/hour `<h>` — hour breakdown (e.g. /hour 14)\n"
         "/report — weekly report\n"
         "/block\\_now `<mins>` `[domain ...]` — start a focus block\n"
@@ -86,24 +87,38 @@ async def cmd_plan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(format_plan_prompt(tomorrow), parse_mode="Markdown")
 
 
-async def cmd_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_day(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     from backend.scoring import format_daily_report, compute_score
-    today = today_date()
-    aggregates = [dict(r) for r in db.get_activity_for_date(today)]
-    sessions   = [dict(r) for r in db.get_sessions_for_date(today)]
-    timeline   = db.get_timeline_for_date(today)
-    coverage   = db.get_coverage(today)
-
-    # Yesterday's score for trend arrow
     from backend.rules import ist_now
-    yesterday = (ist_now().date() - __import__("datetime").timedelta(days=1)).isoformat()
-    prev_aggs  = [dict(r) for r in db.get_activity_for_date(yesterday)]
-    prev_sess  = [dict(r) for r in db.get_sessions_for_date(yesterday)]
+    args = ctx.args or []
+    if args:
+        arg = args[0].lower()
+        if arg == "yesterday":
+            target = (ist_now().date() - timedelta(days=1)).isoformat()
+        else:
+            try:
+                date.fromisoformat(args[0])
+                target = args[0]
+            except ValueError:
+                await update.message.reply_text("Usage: /day  or  /day yesterday  or  /day 2026-06-09")
+                return
+    else:
+        target = today_date()
+
+    aggregates = [dict(r) for r in db.get_activity_for_date(target)]
+    sessions   = [dict(r) for r in db.get_sessions_for_date(target)]
+    timeline   = db.get_timeline_for_date(target)
+    coverage   = db.get_coverage(target)
+
+    # Previous day's score for trend arrow
+    prev_date  = (date.fromisoformat(target) - timedelta(days=1)).isoformat()
+    prev_aggs  = [dict(r) for r in db.get_activity_for_date(prev_date)]
+    prev_sess  = [dict(r) for r in db.get_sessions_for_date(prev_date)]
     prev_score = compute_score(prev_aggs, prev_sess)["score"] if (prev_aggs or prev_sess) else None
 
-    deep_target  = float(db.get_config("score_deep_target_min",   "240"))
+    deep_target   = float(db.get_config("score_deep_target_min",   "240"))
     streak_target = float(db.get_config("score_streak_target_min", "90"))
-    msg = format_daily_report(today, aggregates, sessions, timeline,
+    msg = format_daily_report(target, aggregates, sessions, timeline,
                                prev_score, deep_target, streak_target, coverage)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -311,7 +326,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "I didn't understand that. Try:\n"
         "/plan — plan tomorrow\n"
-        "/today — today's activity\n"
+        "/day — today's activity\n"
         "/report — weekly report\n"
         "/block_now <mins> — start a focus block\n"
         "/shift <label> <±mins> — shift a time block"
@@ -329,7 +344,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("plan", cmd_plan))
-    app.add_handler(CommandHandler("today", cmd_today))
+    app.add_handler(CommandHandler("day", cmd_day))
     app.add_handler(CommandHandler("hour", cmd_hour))
     app.add_handler(CommandHandler("report", cmd_report))
     app.add_handler(CommandHandler("shift", cmd_shift))
