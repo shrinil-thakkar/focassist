@@ -144,9 +144,13 @@ def build_timeline(events: dict, resolved: dict | None = None) -> list[str]:
             if overlap_sec > 0:
                 bucket_sec[i][label] = bucket_sec[i].get(label, 0) + overlap_sec
 
+    now_ist = datetime.now(IST)
     result = []
-    for bucket in bucket_sec:
-        if not bucket:
+    for i, bucket in enumerate(bucket_sec):
+        b_start = day_start + timedelta(minutes=i * TIMELINE_BUCKET_MIN)
+        if b_start >= now_ist:
+            result.append("future")
+        elif not bucket:
             result.append("untracked")
         else:
             result.append(max(bucket, key=bucket.get))

@@ -107,7 +107,7 @@ def _timeline_strip(buckets: list[str], start_h: int = 8, bucket_min: int = 15) 
     per_hour = 60 // bucket_min
     n_hours  = len(buckets) // per_hour
 
-    _BLANK = ("idle", "neutral", "untracked")
+    _BLANK = ("idle", "neutral", "untracked", "future")
     first_active = next(
         (h for h in range(n_hours)
          if any(b not in _BLANK for b in buckets[h*per_hour:(h+1)*per_hour])),
@@ -379,7 +379,8 @@ def format_hour_report(
     lines = [header, ""]
     for tier in ("deep", "supporting", "distraction", "neutral"):
         lines.append(f"{TIER_ICON[tier]} {TIER_LABEL[tier]:<12} {_fmt(tier_totals[tier])}")
-    # §6: surface idle + untracked so active + idle + untracked = elapsed wall-clock
+    # §6: surface idle + untracked so active + idle + untracked = elapsed wall-clock.
+    # Exclude "future" buckets — time that hasn't happened yet is not untracked.
     if h_slice:
         idle_min = sum(15.0 for s in h_slice if s == "idle")
         untracked_min = sum(15.0 for s in h_slice if s == "untracked")
@@ -390,11 +391,13 @@ def format_hour_report(
     if elapsed_min is not None:
         lines.append(f"{int(elapsed_min)}m into the hour")
 
-    # 15-min strip for this hour
+    # 15-min strip for this hour — stop at future buckets
     if h_slice:
-        emojis = "".join(TIER_ICON.get(t, "⬜") for t in h_slice)
-        lines.append("")
-        lines.append(f"15-min: {emojis}")
+        visible = [t for t in h_slice if t != "future"]
+        if visible:
+            emojis = "".join(TIER_ICON.get(t, "⬜") for t in visible)
+            lines.append("")
+            lines.append(f"15-min: {emojis}")
 
     # Flat by-app/site list, tier-emoji prefixed (same name may legitimately
     # appear under multiple tiers — e.g. a whitelisted path on a domain).
