@@ -153,6 +153,32 @@ def build_timeline(events: dict, resolved: dict | None = None) -> list[str]:
     return result
 
 
+def build_daily_aggregates(events: dict, resolved: dict | None = None) -> list[dict]:
+    """
+    Daily rollup of active time from the resolved AFK-anchored timeline.
+    Derives aggregates from the same source as build_hourly_aggregates so
+    browser intervals are represented exactly once — no window/web duplication
+    (Fix B: each interval contributes exactly one {tier, category, app, domain}).
+    Neutral entries are excluded (per spec §1). Browser-unlabeled intervals are
+    included as distraction so the score and tier totals stay honest; the
+    reporting layer hides them from top-N lists and surfaces them via the warning.
+    """
+    timeline = _resolved(events, resolved)["timeline"]
+    agg: dict[tuple, float] = defaultdict(float)
+    for entry in timeline:
+        if entry["state"] != "active" or entry["tier"] == "neutral":
+            continue
+        key = (entry["tier"], entry["category"], entry["app"], entry["domain"])
+        dur = (entry["end"] - entry["start"]).total_seconds() / 60.0
+        agg[key] += dur
+    return [
+        {"tier": k[0], "category": k[1], "app": k[2], "domain": k[3],
+         "minutes": round(v, 2)}
+        for k, v in agg.items()
+        if v > 0.05
+    ]
+
+
 def build_hourly_aggregates(events: dict, resolved: dict | None = None) -> list[dict]:
     """
     Per-hour (IST) rollup of *active* time only: [{hour, tier, category, app, domain, minutes}].

@@ -58,6 +58,10 @@ class HourlyItem(BaseModel):
 class CoverageFlag(BaseModel):
     type: str
     message: str
+    coverage: float | None = None            # chrome_unlabeled: URL-coverage fraction
+    unlabeled_minutes: float | None = None   # chrome_unlabeled: unlabeled browser minutes
+    minutes: float | None = None             # non_chrome_browser: minutes in other browser
+    fraction: float | None = None            # high_untracked: untracked fraction
 
 
 class Coverage(BaseModel):
@@ -66,6 +70,7 @@ class Coverage(BaseModel):
     idle_minutes: float = 0
     untracked_minutes: float = 0
     flags: list[CoverageFlag] = []
+    first_tracked_ist: str | None = None
 
 
 class IngestPayload(BaseModel):
@@ -93,7 +98,9 @@ def ingest(payload: IngestPayload, _=Depends(require_auth)):
     if payload.coverage is not None:
         c = payload.coverage
         db.save_coverage(payload.date, c.active_minutes, c.idle_minutes,
-                         c.untracked_minutes, [f.model_dump() for f in c.flags])
+                         c.untracked_minutes,
+                         [f.model_dump(exclude_none=True) for f in c.flags],
+                         c.first_tracked_ist)
     return {
         "status": "ok",
         "aggregates": len(payload.aggregates),

@@ -91,17 +91,21 @@ Three **independent** signals, blended. Transparent on purpose — an arbitrary 
 ```
 Focus Score = 100 × ( 0.45·Depth + 0.25·Consistency + 0.30·Cleanliness )
 
-Depth        = min( deep_session_minutes / 240 , 1 )      # 4h of in-session deep work = full
+Depth        = min( deep_minutes / 240 , 1 )              # ALL deep minutes, session or not
 Consistency  = min( longest_session_minutes / 90 , 1 )    # a sustained 90-min block = full
 Cleanliness  = 1 − min( distraction_minutes / active_minutes , 0.5 ) / 0.5   # ≥50% distraction = 0
 ```
 
-- **Depth** rewards *volume* of real focus (not just avoiding distraction on a light day).
+- **Depth** rewards *volume* of real focus using **all** deep minutes, not just those inside
+  qualified sessions. A fragmented but genuine deep-work day scores non-zero (previously it
+  collapsed to 0 alongside Consistency, making the score unreadably low).
 - **Consistency** rewards *sustained* focus — the "serious productivity period" you care about.
+  It still uses the longest qualified session (≥25 min, ≤20% absorbed non-deep) so it correctly
+  distinguishes sustained from scattered work.
 - **Cleanliness** is the distraction lever; it bites hard (50% of active time wasted → 0).
 
 Calibration check: a solid dev day (4h deep work, a 90-min streak, <10% distraction) ≈ **95**.
-Today's sample (≈1h scattered deep, ~54% distraction) ≈ **22**. Weights are tunable in `config`.
+Fragmented day (1h 34m scattered deep, ~50% distraction, no session) ≈ **18** (not 0).
 
 ---
 

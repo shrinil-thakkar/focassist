@@ -124,6 +124,9 @@ def init_db() -> None:
         # ── activity table — add tier column + backfill old rows ──────────────
         _migrate_activity(conn)
 
+        # ── coverage table — add first_tracked_ist column ─────────────────────
+        _migrate_coverage(conn)
+
         # ── Seed default config ───────────────────────────────────────────────
         defaults = {
             "nudge_evening":        "21:00",
@@ -142,6 +145,13 @@ def init_db() -> None:
                 "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)",
                 (key, value),
             )
+
+
+def _migrate_coverage(conn: sqlite3.Connection) -> None:
+    """Add first_tracked_ist column to daily_coverage if absent."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(daily_coverage)").fetchall()}
+    if "first_tracked_ist" not in cols:
+        conn.execute("ALTER TABLE daily_coverage ADD COLUMN first_tracked_ist TEXT")
 
 
 def _migrate_rules(conn: sqlite3.Connection) -> None:
@@ -314,7 +324,8 @@ def get_timeline_for_date(date: str) -> list[str]:
 
 
 def save_coverage(date: str, active_minutes: float, idle_minutes: float,
-                  untracked_minutes: float, flags: list[dict]) -> None:
+                  untracked_minutes: float, flags: list[dict],
+                  first_tracked_ist: str | None = None) -> None:
     """
     Persist the day's active/idle/untracked reconciliation totals + health flags
     (tracking-algorithm.md §6, §5) — the trust check behind 'tracked X; idle Y;
@@ -323,14 +334,17 @@ def save_coverage(date: str, active_minutes: float, idle_minutes: float,
     import json
     with get_db() as conn:
         conn.execute(
-            """INSERT INTO daily_coverage (date, active_minutes, idle_minutes, untracked_minutes, flags)
-               VALUES (?, ?, ?, ?, ?)
+            """INSERT INTO daily_coverage
+                 (date, active_minutes, idle_minutes, untracked_minutes, flags, first_tracked_ist)
+               VALUES (?, ?, ?, ?, ?, ?)
                ON CONFLICT(date) DO UPDATE SET
                  active_minutes=excluded.active_minutes,
                  idle_minutes=excluded.idle_minutes,
                  untracked_minutes=excluded.untracked_minutes,
-                 flags=excluded.flags""",
-            (date, active_minutes, idle_minutes, untracked_minutes, json.dumps(flags)),
+                 flags=excluded.flags,
+                 first_tracked_ist=excluded.first_tracked_ist""",
+            (date, active_minutes, idle_minutes, untracked_minutes,
+             json.dumps(flags), first_tracked_ist),
         )
 
 
@@ -347,6 +361,7 @@ def get_coverage(date: str) -> dict | None:
         "idle_minutes": row["idle_minutes"],
         "untracked_minutes": row["untracked_minutes"],
         "flags": json.loads(row["flags"]),
+        "first_tracked_ist": row["first_tracked_ist"],
     }
 
 

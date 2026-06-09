@@ -14,10 +14,20 @@ TIER_ICON  = {"deep": "🟩", "supporting": "🟦", "distraction": "🟥", "neut
               "idle": "⬜", "untracked": "⬛"}
 TIER_LABEL = {"deep": "Deep", "supporting": "Supporting", "distraction": "Distraction", "neutral": "Neutral"}
 
+DIVIDER = "─────────────────────────────"
+_BAR_LEN = 10
+
 
 def _fmt(mins: float) -> str:
     h, m = int(mins) // 60, int(mins) % 60
-    return f"{h}h {m}m" if h else f"{m}m"
+    if h and m:
+        return f"{h}h {m:02d}m"
+    return f"{h}h" if h else f"{m}m"
+
+
+def _bar(frac: float) -> str:
+    filled = max(0, min(_BAR_LEN, round(frac * _BAR_LEN)))
+    return "█" * filled + "░" * (_BAR_LEN - filled)
 
 
 def _tier_totals(aggregates: list) -> dict[str, float]:
@@ -42,25 +52,30 @@ def compute_score(
     distraction = totals.get("distraction", 0)
     active      = deep_agg + supporting + distraction
 
-    deep_sess   = sum(s["deep_minutes"]    if isinstance(s, dict) else s["deep_minutes"]    for s in sessions)
-    longest     = max((s["span_minutes"]   if isinstance(s, dict) else s["span_minutes"]    for s in sessions), default=0)
+    longest     = max(
+        (s["span_minutes"] if isinstance(s, dict) else s["span_minutes"] for s in sessions),
+        default=0,
+    )
 
-    depth       = min(deep_sess / deep_target_min,   1.0) if deep_target_min  > 0 else 0.0
-    consistency = min(longest  / streak_target_min,  1.0) if streak_target_min > 0 else 0.0
+    # Fix A: Depth uses *all* deep minutes, not just in-session deep minutes.
+    # Consistency still uses the longest qualified session span so it rewards
+    # sustained focus without penalising a fragmented-but-real deep-work day.
+    depth       = min(deep_agg / deep_target_min,   1.0) if deep_target_min  > 0 else 0.0
+    consistency = min(longest  / streak_target_min, 1.0) if streak_target_min > 0 else 0.0
     cleanliness = (1 - min(distraction / max(active, 1), 0.5) / 0.5) if active > 0 else 1.0
 
     score = int(100 * (0.45 * depth + 0.25 * consistency + 0.30 * cleanliness))
 
     return {
-        "score":                  score,
-        "deep_minutes":           round(deep_sess, 1),
-        "active_minutes":         round(active, 1),
-        "distraction_minutes":    round(distraction, 1),
-        "session_count":          len(sessions),
-        "longest_session_minutes":round(longest, 1),
-        "depth":                  round(depth, 3),
-        "consistency":            round(consistency, 3),
-        "cleanliness":            round(cleanliness, 3),
+        "score":                   score,
+        "deep_minutes":            round(deep_agg, 1),
+        "active_minutes":          round(active, 1),
+        "distraction_minutes":     round(distraction, 1),
+        "session_count":           len(sessions),
+        "longest_session_minutes": round(longest, 1),
+        "depth":                   round(depth, 3),
+        "consistency":             round(consistency, 3),
+        "cleanliness":             round(cleanliness, 3),
     }
 
 
@@ -111,21 +126,23 @@ def _timeline_strip(buckets: list[str], start_h: int = 8, bucket_min: int = 15) 
         hour   = start_h + hour_idx
         slice_ = buckets[hour_idx * per_hour: (hour_idx + 1) * per_hour]
         emojis = "".join(TIER_ICON.get(t, "⬜") for t in slice_)
-        chunks.append(f"`{_hour_label(hour)}` {emojis}")
+        chunks.append(f"{_hour_label(hour):>4} {emojis}")
     return "\n".join(chunks)
 
 
 def _top_items(aggregates: list, tier: str, n: int = 3) -> list[tuple[str, float]]:
-    """Return top-n (label, minutes) items for a tier, rolled up by domain/app."""
+    """Return top-n (label, minutes) items for a tier, rolled up by domain/app.
+    Browser-unlabeled entries are excluded — they appear in the warning banner."""
     totals: dict[str, float] = {}
     for a in aggregates:
-        if (a["tier"] if isinstance(a, dict) else a["tier"]) != tier:
+        a = a if isinstance(a, dict) else dict(a)
+        if a["tier"] != tier:
             continue
-        label = (a["domain"] if isinstance(a, dict) else a["domain"]) or \
-                (a["app"]    if isinstance(a, dict) else a["app"])
+        if a.get("category") == "browser-unlabeled":
+            continue
+        label = a["domain"] or a["app"]
         if label:
-            totals[label] = totals.get(label, 0) + \
-                            (a["minutes"] if isinstance(a, dict) else a["minutes"])
+            totals[label] = totals.get(label, 0) + a["minutes"]
     return sorted(totals.items(), key=lambda x: -x[1])[:n]
 
 
@@ -134,6 +151,30 @@ TIER_SECTION_TITLE = {
     "supporting":  "Top supporting",
     "distraction": "Top distractions",
 }
+
+
+# ── Score why-line ────────────────────────────────────────────────────────────
+
+def _score_why(m: dict, totals: dict) -> str | None:
+    if m["score"] >= 80:
+        return None
+    parts = []
+    deep_min = totals.get("deep", 0)
+    # Consistency signal
+    if m["session_count"] == 0 and deep_min > 0:
+        parts.append("no block ≥25 min")
+    elif m["longest_session_minutes"] > 0 and m["consistency"] < 0.40:
+        parts.append(f"longest block {int(m['longest_session_minutes'])}m")
+    # Cleanliness signal
+    active = m["active_minutes"]
+    dist = totals.get("distraction", 0)
+    if active > 0 and dist / active >= 0.38:
+        pct = int(dist / active * 100 // 10 * 10)
+        parts.append(f"~{max(pct, 10)}% distraction")
+    # Depth signal (fallback when other reasons are silent)
+    if not parts and deep_min < 30:
+        parts.append("no deep work" if deep_min == 0 else f"only {_fmt(deep_min)} deep")
+    return " · ".join(parts[:2]) if parts else None
 
 
 # ── Daily report ──────────────────────────────────────────────────────────────
@@ -155,97 +196,136 @@ def format_daily_report(
     totals = _tier_totals(aggregates)
     active = m["active_minutes"]
 
-    # Headline
-    trend = ""
-    if prev_score is not None:
-        delta = m["score"] - prev_score
-        arrow = "▲" if delta >= 0 else "▼"
-        trend = f"  {arrow} {abs(delta)} vs yesterday"
-
     # Friendly date label
     from datetime import date as _date
     try:
         parsed = _date.fromisoformat(for_date)
-        today = _date.today()
-        if parsed == today:
-            date_label = f"Today, {parsed.strftime('%b %-d')}"
-        elif (today - parsed).days == 1:
-            date_label = f"Yesterday, {parsed.strftime('%b %-d')}"
-        else:
-            date_label = parsed.strftime("%b %-d")
+        date_label = parsed.strftime("%a %b %-d")
     except Exception:
         date_label = for_date
 
-    lines = [f"📊 *Focus Score: {m['score']}/100*{trend}"]
+    lines: list[str] = []
 
-    # ── Headline + reconciliation (the trust check, tracking-algorithm.md §6) ──
-    # active + idle + untracked must equal elapsed wall-clock; fold all three
-    # into one line — using the same icons as the strip below — so a
-    # half-tracked day reads as half-tracked, never as a quiet/lazy one.
+    # ── Score + why ────────────────────────────────────────────────────────────
+    trend = ""
+    if prev_score is not None:
+        delta = m["score"] - prev_score
+        arrow = "▲" if delta >= 0 else "▼"
+        trend = f"   {arrow} {abs(delta)} vs yesterday"
+    lines.append(f"📊 Focus {m['score']}/100{trend}")
+    why = _score_why(m, totals)
+    if why:
+        lines.append(f"why: {why}")
+    lines.append(DIVIDER)
+
+    # ── Warnings at top — caveat everything below ──────────────────────────────
     if coverage:
-        lines.append(
-            f"🗓 {date_label}\n"
-            f"🟩 active {_fmt(active)}"
-            f"   ⬜ idle {_fmt(coverage.get('idle_minutes', 0))}"
-            f"   ⬛ untracked {_fmt(coverage.get('untracked_minutes', 0))}"
-        )
-        for flag in coverage.get("flags", []):
-            lines.append(f"⚠️ {flag.get('message', flag.get('type', ''))}")
+        flags = coverage.get("flags", [])
+        warned = False
+        for flag in flags:
+            ftype = flag.get("type", "")
+            if ftype == "chrome_unlabeled":
+                unlab = flag.get("unlabeled_minutes")
+                unlab_str = _fmt(unlab) if unlab else "Some browsing"
+                lines.append(f"⚠️ {unlab_str} of browsing is unlabeled — the Chrome")
+                lines.append(f"   extension looks down, so categories are partial.")
+                lines.append(f"   Read the breakdown loosely.")
+                warned = True
+            elif ftype == "non_chrome_browser":
+                mins = flag.get("minutes", 0)
+                lines.append(f"⚠️ {_fmt(mins)} in non-Chrome browser — no URL labels.")
+                warned = True
+        if warned:
+            lines.append(DIVIDER)
+
+    # ── Time accounting ────────────────────────────────────────────────────────
+    first_tracked = (coverage or {}).get("first_tracked_ist")
+    tracked_str = f" · tracked from {first_tracked}" if first_tracked else ""
+    lines.append(f"⏱ {date_label}{tracked_str}")
+    if coverage:
+        idle_min = coverage.get("idle_minutes", 0)
+        untracked_min = coverage.get("untracked_minutes", 0)
+        lines.append(f"🟩 active    {_fmt(active):>7}")
+        lines.append(f"⬜ idle      {_fmt(idle_min):>7}   away from laptop")
+        lines.append(f"⬛ untracked {_fmt(untracked_min):>7}   asleep / closed")
     else:
-        lines.append(f"🗓 {date_label} · active {_fmt(active)}")
-    lines.append("")
+        lines.append(f"🟩 active    {_fmt(active):>7}")
+    lines.append(DIVIDER)
 
-    # Tier breakdown (no inline extras — dedicated sections below)
-    for tier in ("deep", "supporting", "distraction", "neutral"):
+    # ── Tier breakdown — explicitly a child of active ──────────────────────────
+    lines.append(f"📂 That active {_fmt(active)} breaks into:")
+    for tier in ("deep", "supporting", "distraction"):
         mins = totals.get(tier, 0)
-        if mins > 0:
-            lines.append(f"{TIER_ICON[tier]} {TIER_LABEL[tier]:<12} {_fmt(mins)}")
-        elif tier not in ("neutral", "supporting"):
-            lines.append(f"{TIER_ICON[tier]} {TIER_LABEL[tier]:<12} —")
+        icon  = TIER_ICON[tier]
+        label = TIER_LABEL[tier]
+        if mins > 0 and active > 0:
+            frac = mins / active
+            pct  = round(frac * 100)
+            lines.append(f"{icon} {label:<11} {_fmt(mins):<8} {_bar(frac)} {pct}%")
+        else:
+            lines.append(f"{icon} {label:<11} —")
+    lines.append(DIVIDER)
 
-    # Timeline strip
+    # ── Timeline with legend ───────────────────────────────────────────────────
     if timeline:
         strip = _timeline_strip(timeline)
         if strip:
-            lines.append("")
+            lines.append("🕐 By hour  🟩deep 🟦supp 🟥distr ⬜idle ⬛untrk")
             lines.append(strip)
+            lines.append(DIVIDER)
 
-    # ── Focus sessions section ────────────────────────────────────────────────
-    lines.append("")
+    # ── Focus sessions — explains why 0 sessions ≠ no deep work ───────────────
     n_sess = m["session_count"]
-    deep_agg = totals.get("deep", 0)
-
+    deep_agg_min = totals.get("deep", 0)
+    lines.append(f"🎯 Focus sessions: {n_sess}")
     if n_sess > 0:
         total_deep_sess = sum(
             (s["deep_minutes"] if isinstance(s, dict) else s["deep_minutes"])
             for s in sessions
         )
-        best = max(sessions,
-                   key=lambda s: (s["span_minutes"] if isinstance(s, dict) else s["span_minutes"]))
+        best = max(
+            sessions,
+            key=lambda s: (s["span_minutes"] if isinstance(s, dict) else s["span_minutes"]),
+        )
         best = best if isinstance(best, dict) else dict(best)
-        lines.append(
-            f"🎯 *Focus sessions: {n_sess}*  ·  {_fmt(total_deep_sess)} deep"
-        )
-        lines.append(
-            f"   Best: {_fmt_time(best['start'])} – {_fmt_time(best['end'])}  "
-            f"({int(best['span_minutes'])}m)"
-        )
-    elif deep_agg >= 5:
-        lines.append(f"🎯 *Focus sessions: 0*")
-        lines.append(f"   {_fmt(deep_agg)} deep done — fragmented, no 25-min block")
+        pl = "s" if n_sess > 1 else ""
+        lines.append(f"{_fmt(total_deep_sess)} deep across {n_sess} session{pl}")
+        lines.append(f"Best: {_fmt_time(best['start'])}–{_fmt_time(best['end'])} ({int(best['span_minutes'])}m)")
+    elif deep_agg_min >= 5:
+        lines.append(f"{_fmt(deep_agg_min)} of deep work, but scattered — nothing")
+        lines.append(f"ran ≥25 min unbroken. Sustained blocks are")
+        lines.append(f"what lift the score.")
     else:
-        lines.append("🎯 *Focus sessions: 0*  — no deep work recorded")
+        lines.append("No deep work recorded.")
+    lines.append(DIVIDER)
 
-    # ── Top items per tier ────────────────────────────────────────────────────
+    # ── Top items per tier — capped at 3, right-aligned minutes ───────────────
     for tier in ("deep", "supporting", "distraction"):
-        top3 = _top_items(aggregates, tier, 3)
-        if top3:
-            lines.append("")
-            lines.append(f"{TIER_ICON[tier]} *{TIER_SECTION_TITLE[tier]}*")
-            for label, mins in top3:
-                lines.append(f"   {label:<28} {_fmt(mins)}")
+        lines.append(f"{TIER_ICON[tier]} {TIER_SECTION_TITLE[tier]}")
+        top = _top_items(aggregates, tier, 3)
+        if top:
+            for lbl, mins in top:
+                lbl_t = lbl[:16]
+                lines.append(f"   {lbl_t:<16} {_fmt(mins):>7}")
+        else:
+            lines.append("   —")
 
-    return "\n".join(lines)
+    # ── Coaching tip ───────────────────────────────────────────────────────────
+    tip: str | None = None
+    if n_sess == 0 and deep_agg_min > 0:
+        tip = "Tomorrow: protect one 25-min block\nbefore messages start."
+    elif n_sess > 0 and m["consistency"] < 0.50:
+        tip = "Target one unbroken 90-min block tomorrow."
+    else:
+        top_dist = _top_items(aggregates, "distraction", 1)
+        if top_dist and totals.get("distraction", 0) > totals.get("deep", 0):
+            tip = f"Block {top_dist[0][0][:20]} during your\nfocus window tomorrow."
+    if tip:
+        lines.append(DIVIDER)
+        lines.append(f"💡 {tip}")
+
+    body = "\n".join(lines)
+    return f"```\n{body}\n```"
 
 
 # ── Hour report ───────────────────────────────────────────────────────────────

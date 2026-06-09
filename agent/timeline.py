@@ -409,6 +409,7 @@ def detect_flags(result: dict, config: dict | None = None,
                             f"({round(chrome_unlabeled / 60, 1)}m unlabeled) — "
                             "is the aw-watcher-web-chrome extension running?"),
                 "coverage": round(coverage, 3),
+                "unlabeled_minutes": round(chrome_unlabeled / 60, 1),
             })
 
     non_chrome_sec = sum((iv["end"] - iv["start"]).total_seconds()
