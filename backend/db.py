@@ -116,6 +116,13 @@ def init_db() -> None:
                 domain   TEXT NOT NULL,
                 minutes  REAL NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS reprocess_queue (
+                date    TEXT PRIMARY KEY,
+                status  TEXT NOT NULL DEFAULT 'pending'
+                        CHECK(status IN ('pending','done')),
+                created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
         """)
 
         # ── rules table — recreate if old schema (no tier/url_match support) ──
@@ -449,6 +456,30 @@ def save_plan(date: str, raw_text: str) -> None:
 def get_plan(date: str) -> sqlite3.Row | None:
     with get_db() as conn:
         return conn.execute("SELECT * FROM plans WHERE date = ?", (date,)).fetchone()
+
+
+def add_reprocess_job(date: str) -> None:
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO reprocess_queue (date, status) VALUES (?, 'pending')
+               ON CONFLICT(date) DO UPDATE SET status='pending', created=CURRENT_TIMESTAMP""",
+            (date,),
+        )
+
+
+def get_pending_reprocess_jobs() -> list[str]:
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT date FROM reprocess_queue WHERE status='pending' ORDER BY created"
+        ).fetchall()
+    return [r["date"] for r in rows]
+
+
+def mark_reprocess_done(date: str) -> None:
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE reprocess_queue SET status='done' WHERE date=?", (date,)
+        )
 
 
 def get_active_directive() -> dict:

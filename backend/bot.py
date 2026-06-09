@@ -123,6 +123,36 @@ async def cmd_day(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
+async def cmd_reprocess(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    from backend.rules import ist_now
+    args = ctx.args or []
+    if not args:
+        await update.message.reply_text(
+            "Usage: `/reprocess yesterday`  or  `/reprocess 2026-06-09`",
+            parse_mode="Markdown",
+        )
+        return
+    arg = args[0].lower()
+    if arg == "yesterday":
+        target = (ist_now().date() - timedelta(days=1)).isoformat()
+    else:
+        try:
+            date.fromisoformat(args[0])
+            target = args[0]
+        except ValueError:
+            await update.message.reply_text(
+                "Usage: `/reprocess yesterday`  or  `/reprocess 2026-06-09`",
+                parse_mode="Markdown",
+            )
+            return
+    db.add_reprocess_job(target)
+    await update.message.reply_text(
+        f"Queued reprocess for `{target}`. The Mac agent will pick it up within ~5 min.\n"
+        f"Then run `/day {target}` to see the updated report.",
+        parse_mode="Markdown",
+    )
+
+
 _HOUR_RE = re.compile(r"^(\d{1,2})\s*(am|pm)?$", re.IGNORECASE)
 
 
@@ -345,6 +375,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("plan", cmd_plan))
     app.add_handler(CommandHandler("day", cmd_day))
+    app.add_handler(CommandHandler("reprocess", cmd_reprocess))
     app.add_handler(CommandHandler("hour", cmd_hour))
     app.add_handler(CommandHandler("report", cmd_report))
     app.add_handler(CommandHandler("shift", cmd_shift))

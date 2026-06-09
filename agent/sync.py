@@ -101,3 +101,24 @@ def get_rules() -> list[dict]:
     except (URLError, HTTPError) as e:
         log.error("Failed to fetch rules: %s", e)
         return []
+
+
+def get_reprocess_jobs() -> list[str]:
+    """Return pending reprocess dates queued by the bot."""
+    if not BACKEND_URL:
+        return []
+    try:
+        result = _get("/reprocess-jobs")
+        return result.get("dates", [])
+    except (URLError, HTTPError) as e:
+        log.error("Failed to fetch reprocess jobs: %s", e)
+        return []
+
+
+def mark_reprocess_done(job_date: str) -> None:
+    if not BACKEND_URL:
+        return
+    try:
+        _post(f"/reprocess-jobs/{job_date}/done", {})
+    except (URLError, HTTPError) as e:
+        log.error("Failed to mark reprocess done for %s: %s", job_date, e)

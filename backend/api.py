@@ -128,6 +128,17 @@ def rules(_=Depends(require_auth)):
     ]
 
 
+@app.get("/reprocess-jobs")
+def reprocess_jobs(_=Depends(require_auth)):
+    return {"dates": db.get_pending_reprocess_jobs()}
+
+
+@app.post("/reprocess-jobs/{job_date}/done")
+def reprocess_done(job_date: str, _=Depends(require_auth)):
+    db.mark_reprocess_done(job_date)
+    return {"status": "ok"}
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
