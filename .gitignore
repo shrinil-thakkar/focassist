@@ -16,3 +16,5 @@ infra/cdk.out/
 infra/.cdk.staging/
 infra/cdk.context.json
 *.pem
+credentials.json
+token.json

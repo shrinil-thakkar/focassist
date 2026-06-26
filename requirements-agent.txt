@@ -1,3 +1,6 @@
 # Mac agent dependencies
-# No third-party packages needed for the agent (uses stdlib urllib + json)
-# If you add optional features (e.g. requests), list them here.
+# Core agent uses stdlib only (urllib + json).
+# Calendar tool requires Google API client libraries (agent/calendar.py).
+google-auth>=2.29.0
+google-auth-oauthlib>=1.2.0
+google-api-python-client>=2.126.0
