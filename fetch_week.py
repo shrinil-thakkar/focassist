@@ -12,6 +12,7 @@ agent/main.py (which polls for jobs queued that way).
 """
 
 import argparse
+import json
 import sys
 
 from agent.weekly_fetch import fetch_and_write
@@ -24,6 +25,8 @@ def main():
     parser.add_argument("--max-events", type=int, default=20, help="Cap on calendar events fetched (default: 20)")
     parser.add_argument("--emails-out", default="emails_last_week.json")
     parser.add_argument("--calendar-out", default="calendar_last_week.json")
+    parser.add_argument("--label", action="store_true", help="Also run label_tool.py on the fetched emails")
+    parser.add_argument("--labels-out", default="emails_labeled.json")
     args = parser.parse_args()
 
     try:
@@ -40,6 +43,17 @@ def main():
     except PermissionError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
+    if args.label:
+        from agent.label_tool import label_batch, print_summary
+
+        with open(args.emails_out) as f:
+            emails = json.load(f)
+        labeled = label_batch(emails)
+        with open(args.labels_out, "w") as f:
+            json.dump(labeled, f, indent=2)
+        print_summary(labeled)
+        print(f"\nWrote {len(labeled)} labeled emails to {args.labels_out}", file=sys.stderr)
 
 
 if __name__ == "__main__":

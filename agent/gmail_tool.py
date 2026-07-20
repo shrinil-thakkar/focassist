@@ -126,6 +126,8 @@ def fetch_emails(days: int = 7, max_results: int = 200) -> list:
             "subject": _header(headers, "Subject"),
             "snippet": msg.get("snippet", ""),
             "body": _extract_body(msg.get("payload", {})),
+            "gmail_labels": label_ids,
+            "has_list_unsubscribe": bool(_header(headers, "List-Unsubscribe")),
         })
     print(file=sys.stderr)  # clear the progress line
     # messages().list already returns newest first; emails list preserves that order.

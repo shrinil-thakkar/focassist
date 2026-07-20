@@ -1,0 +1,17 @@
+# Sender-domain lists for label_tool.py's deterministic rule layer.
+# Edit freely — no code changes needed to extend these.
+
+finance_domains:
+  - zerodha.com
+  - kite.zerodha.com
+  - cdslindia.com
+  - nsdl.co.in
+  - incometax.gov.in
+  - hdfcbank.net
+  - icicibank.com
+
+fitness_domains:
+  - strava.com
+
+work_domains:
+  - YOUR_COMPANY_DOMAIN

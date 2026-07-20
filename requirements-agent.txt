@@ -4,3 +4,6 @@
 google-auth>=2.29.0
 google-auth-oauthlib>=1.2.0
 google-api-python-client>=2.126.0
+# Gmail labeling (agent/label_tool.py) — Gemini via GCP Vertex AI, billed through GCP credits
+google-genai>=2.0.0
+PyYAML>=6.0
