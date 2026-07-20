@@ -13,15 +13,20 @@ import json
 import os
 import re
 import sys
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import yaml
 from google import genai
+from google.genai import errors as genai_errors
 
 MODEL = "gemini-2.5-flash-lite"
 BATCH_SIZE = 12
 BODY_CHARS_TO_LLM = 500
+MAX_RETRIES = 4
+RETRY_BACKOFF_SECONDS = 5  # doubles each retry: 5, 10, 20, 40
+INTER_BATCH_DELAY_SECONDS = 2  # spacing between batches, to stay under per-minute quota
 
 # Billed through GCP (Vertex AI) — same project/region conventions as google-genai.
 GENAI_PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "muti-agent-testing")
@@ -159,9 +164,34 @@ def _call_llm_batch(batch: list[dict]) -> dict:
     if not batch:
         return {}
     client = _client()
+
+    text = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.models.generate_content(model=MODEL, contents=_build_prompt(batch))
+            text = response.text or ""
+            break
+        except genai_errors.APIError as e:
+            # 429 (rate limit) and 5xx (transient server errors) are worth
+            # retrying with backoff; other API errors (400, permission, etc.)
+            # won't resolve themselves.
+            retryable = e.code == 429 or e.code >= 500
+            if retryable and attempt < MAX_RETRIES - 1:
+                delay = RETRY_BACKOFF_SECONDS * (2 ** attempt)
+                print(f"  LLM call got {e.code}, retrying in {delay}s "
+                      f"(attempt {attempt + 1}/{MAX_RETRIES})...", file=sys.stderr)
+                time.sleep(delay)
+                continue
+            print(f"  LLM batch call failed: {e}", file=sys.stderr)
+            return {}
+        except Exception as e:
+            print(f"  LLM batch call failed: {e}", file=sys.stderr)
+            return {}
+
+    if text is None:
+        return {}
     try:
-        response = client.models.generate_content(model=MODEL, contents=_build_prompt(batch))
-        parsed = json.loads(_strip_code_fence(response.text or ""))
+        parsed = json.loads(_strip_code_fence(text))
     except Exception as e:
         print(f"  LLM batch call failed: {e}", file=sys.stderr)
         return {}
@@ -225,6 +255,8 @@ def label_batch(emails: list[dict]) -> list[dict]:
             pending.append((email, hint))
 
     for i in range(0, len(pending), BATCH_SIZE):
+        if i > 0:
+            time.sleep(INTER_BATCH_DELAY_SECONDS)
         chunk = pending[i:i + BATCH_SIZE]
         print(f"  labeling batch {i // BATCH_SIZE + 1} ({len(chunk)} emails)...", file=sys.stderr)
         llm_results = _call_llm_batch([e for e, _ in chunk])
