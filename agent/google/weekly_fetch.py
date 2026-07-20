@@ -11,7 +11,7 @@ from agent.google.gmail_client import fetch_emails
 
 def fetch_and_write(
     days: int = 7,
-    max_emails: int = 200,
+    max_emails: int = 50,
     max_events: int = 20,
     emails_out: str = "emails_last_week.json",
     calendar_out: str = "calendar_last_week.json",

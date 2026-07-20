@@ -86,7 +86,7 @@ def _header(headers: list, name: str) -> str:
 
 
 # --- fetching ---------------------------------------------------------------
-def fetch_emails(days: int = 7, max_results: int = 200) -> list:
+def fetch_emails(days: int = 7, max_results: int = 50) -> list:
     """Sent + received emails from the last `days` days, newest first, capped at `max_results`."""
     service = _service()
     query = f"newer_than:{days}d (in:inbox OR in:sent)"

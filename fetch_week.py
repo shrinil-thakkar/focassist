@@ -24,7 +24,7 @@ from agent.google.weekly_fetch import fetch_and_write
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--days", type=int, default=7, help="How many days back to fetch (default: 7)")
-    parser.add_argument("--max-emails", type=int, default=200, help="Cap on emails fetched (default: 200)")
+    parser.add_argument("--max-emails", type=int, default=50, help="Cap on emails fetched (default: 50)")
     parser.add_argument("--max-events", type=int, default=20, help="Cap on calendar events fetched (default: 20)")
     parser.add_argument("--emails-out", default="emails_last_week.json")
     parser.add_argument("--calendar-out", default="calendar_last_week.json")
