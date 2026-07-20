@@ -94,7 +94,7 @@ def run_cycle() -> None:
         except Exception as e:
             log.error("Reprocess failed for %s: %s", job_date_str, e)
 
-    # Refetch Gmail+Calendar data queued via /fetch bot command
+    # Refetch Gmail+Calendar data queued via /fetch bot command, then label it
     for job in sync.get_fetch_jobs():
         try:
             log.info("Running Gmail+Calendar fetch (job %s, days=%s)", job["id"], job["days"])
@@ -104,6 +104,19 @@ def run_cycle() -> None:
             log.info("Fetch job %s done", job["id"])
         except Exception as e:
             log.error("Fetch job %s failed: %s", job["id"], e)
+            continue
+
+        try:
+            import json
+            from agent.label_tool import label_batch
+            with open("emails_last_week.json") as f:
+                emails = json.load(f)
+            labeled = label_batch(emails, use_cache=True)
+            with open("emails_labeled.json", "w") as f:
+                json.dump(labeled, f, indent=2)
+            log.info("Labeled %d emails (job %s)", len(labeled), job["id"])
+        except Exception as e:
+            log.error("Labeling failed after fetch job %s: %s", job["id"], e)
 
     # Act on directive
     directive = sync.get_directive()

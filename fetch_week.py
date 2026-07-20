@@ -1,4 +1,6 @@
-"""Fetch the last N days of Gmail + Google Calendar data as JSON.
+"""Fetch the last N days of Gmail + Google Calendar data as JSON, then label
+the emails automatically (rules first, Gemini for the rest — see
+agent/labeling/). Pass --no-label to skip labeling and just fetch.
 
 Usage: python fetch_week.py [--days 7]
 
@@ -7,8 +9,9 @@ opens a browser to consent; after that, ~/.focassist/token.json is reused.
 Read-only — nothing here can send, modify, or delete mail or events.
 
 This can also be triggered remotely via the Telegram /fetch command — see
-agent/google/weekly_fetch.py (the orchestration logic shared by both paths)
-and agent/main.py (which polls for jobs queued that way).
+agent/google/weekly_fetch.py (the fetch orchestration shared by both paths)
+and agent/main.py (which polls for jobs queued that way and labels
+automatically too).
 """
 
 import argparse
@@ -25,10 +28,10 @@ def main():
     parser.add_argument("--max-events", type=int, default=20, help="Cap on calendar events fetched (default: 20)")
     parser.add_argument("--emails-out", default="emails_last_week.json")
     parser.add_argument("--calendar-out", default="calendar_last_week.json")
-    parser.add_argument("--label", action="store_true", help="Also run label_tool.py on the fetched emails")
+    parser.add_argument("--no-label", action="store_true", help="Skip automatic labeling of fetched emails")
     parser.add_argument("--labels-out", default="emails_labeled.json")
-    parser.add_argument("--cache", action="store_true",
-                         help="With --label, reuse cached LLM labels for unchanged emails")
+    parser.add_argument("--no-cache", action="store_true",
+                         help="Force fresh LLM calls instead of reusing cached labels")
     args = parser.parse_args()
 
     try:
@@ -46,12 +49,12 @@ def main():
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if args.label:
+    if not args.no_label:
         from agent.label_tool import label_batch, print_summary
 
         with open(args.emails_out) as f:
             emails = json.load(f)
-        labeled = label_batch(emails, use_cache=args.cache)
+        labeled = label_batch(emails, use_cache=not args.no_cache)
         with open(args.labels_out, "w") as f:
             json.dump(labeled, f, indent=2)
         print_summary(labeled)
