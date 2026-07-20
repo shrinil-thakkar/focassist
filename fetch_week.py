@@ -7,15 +7,15 @@ opens a browser to consent; after that, ~/.focassist/token.json is reused.
 Read-only — nothing here can send, modify, or delete mail or events.
 
 This can also be triggered remotely via the Telegram /fetch command — see
-agent/weekly_fetch.py (the orchestration logic shared by both paths) and
-agent/main.py (which polls for jobs queued that way).
+agent/google/weekly_fetch.py (the orchestration logic shared by both paths)
+and agent/main.py (which polls for jobs queued that way).
 """
 
 import argparse
 import json
 import sys
 
-from agent.weekly_fetch import fetch_and_write
+from agent.google.weekly_fetch import fetch_and_write
 
 
 def main():
@@ -27,6 +27,8 @@ def main():
     parser.add_argument("--calendar-out", default="calendar_last_week.json")
     parser.add_argument("--label", action="store_true", help="Also run label_tool.py on the fetched emails")
     parser.add_argument("--labels-out", default="emails_labeled.json")
+    parser.add_argument("--cache", action="store_true",
+                         help="With --label, reuse cached LLM labels for unchanged emails")
     args = parser.parse_args()
 
     try:
@@ -49,7 +51,7 @@ def main():
 
         with open(args.emails_out) as f:
             emails = json.load(f)
-        labeled = label_batch(emails)
+        labeled = label_batch(emails, use_cache=args.cache)
         with open(args.labels_out, "w") as f:
             json.dump(labeled, f, indent=2)
         print_summary(labeled)

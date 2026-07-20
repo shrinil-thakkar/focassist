@@ -25,13 +25,13 @@ from telegram.ext import (
 )
 
 import backend.db as db
-from backend.rules import (
+from backend.domain.rules import (
     format_plan_prompt,
     format_morning_confirm,
     tomorrow_date,
     today_date,
 )
-from backend import scheduler
+from backend.domain import scheduler
 
 log = logging.getLogger(__name__)
 
@@ -91,8 +91,8 @@ async def cmd_plan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_day(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    from backend.scoring import format_daily_report, compute_score
-    from backend.rules import ist_now
+    from backend.domain.scoring import format_daily_report, compute_score
+    from backend.domain.rules import ist_now
     args = ctx.args or []
     if args:
         arg = args[0].lower()
@@ -127,7 +127,7 @@ async def cmd_day(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_reprocess(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    from backend.rules import ist_now
+    from backend.domain.rules import ist_now
     args = ctx.args or []
     if not args:
         await update.message.reply_text(
@@ -196,8 +196,8 @@ def _parse_hour(text: str) -> int | None:
 
 
 async def cmd_hour(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    from backend.scoring import format_hour_report
-    from backend.rules import ist_now
+    from backend.domain.scoring import format_hour_report
+    from backend.domain.rules import ist_now
     now = ist_now()
     args = ctx.args or []
 
@@ -224,8 +224,8 @@ async def cmd_hour(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_report(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    from backend.scoring import format_weekly_report
-    from backend.rules import ist_now
+    from backend.domain.scoring import format_weekly_report
+    from backend.domain.rules import ist_now
     today = ist_now().date()
     days = []
     for offset in range(6, -1, -1):
@@ -280,7 +280,7 @@ async def cmd_shift(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
     # Reschedule nudge jobs for the moved block
-    from backend import scheduler
+    from backend.domain import scheduler
     scheduler.cancel_block_nudges(row["id"])
     scheduler.schedule_block_nudges(today)
 
@@ -362,8 +362,8 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         db.save_plan(plan_date, text)
 
         # Parse into structured time blocks
-        from backend.plan_parser import parse_plan, format_blocks_confirmation
-        from backend import scheduler
+        from backend.domain.plan_parser import parse_plan, format_blocks_confirmation
+        from backend.domain import scheduler
         blocks = parse_plan(text, plan_date)
         if blocks:
             db.save_time_blocks(plan_date, blocks)

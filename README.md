@@ -134,7 +134,7 @@ export FOCASSIST_BACKEND_URL=https://your-ec2-ip-or-domain
 export FOCASSIST_TOKEN=your-shared-secret
 
 # Check ActivityWatch is running
-python3 -m agent.tracker
+python3 -m agent.tracking.tracker
 
 # Run one sync cycle
 python3 -m agent.main  # Ctrl+C after first cycle

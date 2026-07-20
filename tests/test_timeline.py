@@ -6,8 +6,8 @@ Run with: python -m unittest discover -s tests
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from agent.categorizer import load_rules
-from agent.timeline import resolve_timeline, partition_afk, DEFAULT_CONFIG
+from agent.tracking.categorizer import load_rules
+from agent.tracking.timeline import resolve_timeline, partition_afk, DEFAULT_CONFIG
 
 UTC = timezone.utc
 T0 = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)  # 09:00 UTC
@@ -161,7 +161,7 @@ class PassiveOverrideTests(unittest.TestCase):
 
 
 class BrowserOverrideTests(unittest.TestCase):
-    """§2 step 3 — Chrome focus resolves to domain-level activity, or browser-unlabeled."""
+    """§2 step 3 — Chrome focus resolves to domain-level activity, or browser-unknown."""
 
     def setUp(self):
         load_rules()
@@ -177,7 +177,7 @@ class BrowserOverrideTests(unittest.TestCase):
         active = [iv for iv in result["timeline"] if iv["state"] == "active"]
         self.assertTrue(any(iv["domain"] == "github.com" and iv["tier"] == "deep" for iv in active))
 
-    def test_chrome_without_web_event_is_flagged_unlabeled(self):
+    def test_chrome_without_web_event_is_flagged_unknown(self):
         start, end = T0, T0 + timedelta(minutes=30)
         events = {
             "afk": [_afk(0, 30, "not-afk")],
@@ -186,7 +186,7 @@ class BrowserOverrideTests(unittest.TestCase):
         }
         result = resolve_timeline(events, range_start=start, range_end=end)
         active = [iv for iv in result["timeline"] if iv["state"] == "active"]
-        self.assertTrue(any(iv["category"] == "browser-unlabeled" for iv in active))
+        self.assertTrue(any(iv["category"] == "browser-unknown" for iv in active))
 
 
 if __name__ == "__main__":

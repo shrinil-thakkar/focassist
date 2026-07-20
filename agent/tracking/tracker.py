@@ -102,7 +102,7 @@ def compute_aggregates(events: dict) -> tuple[list[dict], list[dict]]:
     Tier-1 rules are fetched lazily from the backend via sync.get_rules().
     This module only deals with raw roll-up; categorizer.py applies the rules.
     """
-    from agent.categorizer import categorize_events
+    from agent.tracking.categorizer import categorize_events
     return categorize_events(events)
 
 

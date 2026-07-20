@@ -5,8 +5,8 @@
 import json
 import sys
 
-from agent.calendar import get_past_events
-from agent.gmail_tool import fetch_emails
+from agent.google.calendar_client import get_past_events
+from agent.google.gmail_client import fetch_emails
 
 
 def fetch_and_write(

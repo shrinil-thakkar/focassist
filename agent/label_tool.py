@@ -1,7 +1,11 @@
 """Layered email classifier: deterministic rules first, LLM for the remainder.
 
 Labels are stored locally only (emails_labeled.json) — nothing here writes
-back to Gmail. Read-only downstream of gmail_tool.py.
+back to Gmail. Read-only downstream of agent/google/gmail_client.py.
+
+Rules live in agent/labeling/rules.py (pure, network-free) and the LLM layer
+lives in agent/labeling/llm.py (batched Gemini calls via Vertex AI) — this
+module just wires the two together as the CLI entry point.
 
 classify() is the per-email interface a future apply_labels_to_gmail.py can
 reuse unchanged; label_batch() is the efficient bulk path this module's CLI
@@ -10,223 +14,30 @@ uses (batches the LLM layer 10-15 emails per call instead of one-by-one).
 
 import argparse
 import json
-import os
-import re
 import sys
 import time
-from dataclasses import asdict, dataclass
-from pathlib import Path
+from dataclasses import asdict
 
-import yaml
-from google import genai
-from google.genai import errors as genai_errors
-
-MODEL = "gemini-2.5-flash-lite"
-BATCH_SIZE = 12
-BODY_CHARS_TO_LLM = 500
-MAX_RETRIES = 4
-RETRY_BACKOFF_SECONDS = 5  # doubles each retry: 5, 10, 20, 40
-INTER_BATCH_DELAY_SECONDS = 2  # spacing between batches, to stay under per-minute quota
-
-# Billed through GCP (Vertex AI) — same project/region conventions as google-genai.
-GENAI_PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "muti-agent-testing")
-GENAI_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
-
-ACTIONS = {"needs-reply", "action-needed", "fyi", "ignore"}
-CATEGORIES = {"work", "personal", "finance", "fitness", "newsletter", "receipt", "promo"}
-
-RECEIPT_KEYWORDS = ("invoice", "receipt", "payment", "order", "confirmation", "otp")
-NOREPLY_PATTERNS = ("no-reply@", "noreply@", "donotreply")
-
-_RULES_FILE = Path(__file__).parent / "label_rules.yaml"
-_config = yaml.safe_load(_RULES_FILE.read_text()) or {}
-FINANCE_DOMAINS = set(_config.get("finance_domains", []))
-FITNESS_DOMAINS = set(_config.get("fitness_domains", []))
-WORK_DOMAINS = set(_config.get("work_domains", []))
+from agent.labeling import cache
+from agent.labeling.llm import (
+    BATCH_SIZE,
+    INTER_BATCH_DELAY_SECONDS,
+    NEEDS_REVIEW_CONFIDENCE_THRESHOLD,
+    call_batch_with_retry,
+)
+from agent.labeling.rules import Label, classify_rules, finalize, is_unresolved
 
 
-@dataclass
-class Label:
-    action: str | None
-    category: str
-    method: str  # "rule" | "llm" | "llm-fallback"
-    rule: str | None = None
-    confidence: float | None = None
-
-
-# --- deterministic rule layer (pure, no network) -----------------------------
-def _extract_domain(sender: str) -> str:
-    m = re.search(r"@([\w.-]+)", sender or "")
-    return m.group(1).lower() if m else ""
-
-
-def _is_receipt_sender(sender: str) -> bool:
-    sender = sender.lower()
-    return any(p in sender for p in NOREPLY_PATTERNS)
-
-
-def _has_receipt_keywords(subject: str, body: str) -> bool:
-    text = f"{subject} {body}".lower()
-    return any(k in text for k in RECEIPT_KEYWORDS)
-
-
-def classify_rules(email: dict) -> Label | None:
-    """First-match-wins deterministic rules. Returns None if nothing matched."""
-    labels = email.get("gmail_labels") or []
-    sender = (email.get("from") or "").lower()
-    subject = (email.get("subject") or "").lower()
-    body = (email.get("body") or "").lower()
-
-    if email.get("has_list_unsubscribe") and "CATEGORY_PERSONAL" not in labels:
-        return Label(action="fyi", category="newsletter", method="rule", rule="list_unsubscribe")
-
-    if "CATEGORY_PROMOTIONS" in labels:
-        return Label(action="ignore", category="promo", method="rule", rule="category_promotions")
-
-    if _is_receipt_sender(sender) and _has_receipt_keywords(subject, body):
-        return Label(action="fyi", category="receipt", method="rule", rule="receipt_pattern")
-
-    domain = _extract_domain(sender)
-    if domain in FINANCE_DOMAINS:
-        # Category is settled; action is left for the LLM (finance mail can be urgent).
-        return Label(action=None, category="finance", method="rule", rule="finance_domain")
-
-    if domain in FITNESS_DOMAINS:
-        return Label(action="fyi", category="fitness", method="rule", rule="fitness_domain")
-
-    if domain in WORK_DOMAINS:
-        return Label(action=None, category="work", method="rule", rule="work_domain")
-
-    return None
-
-
-def _is_unresolved(label: Label | None, direction: str) -> bool:
-    if label is None:
-        return True
-    # Sent emails always get action=None regardless of source, so a rule that
-    # left action unset is still "resolved" for a sent email.
-    return direction == "received" and label.action is None
-
-
-def _finalize(label: Label, direction: str) -> Label:
-    if direction == "sent":
-        label.action = None
-    return label
-
-
-# --- LLM layer (batched) ------------------------------------------------------
-def _client() -> genai.Client:
-    return genai.Client(vertexai=True, project=GENAI_PROJECT_ID, location=GENAI_LOCATION)
-
-
-def _build_prompt(batch: list[dict]) -> str:
-    lines = [
-        "Classify each email below along two axes.",
-        "",
-        "Axis 1 - action (received emails only; sent emails must get action: null):",
-        "- needs-reply: expects a response from the user",
-        "- action-needed: requires a non-reply task (pay, upload, review, RSVP)",
-        "- fyi: worth knowing, nothing to do",
-        "- ignore: noise",
-        "",
-        "Axis 2 - category (all emails):",
-        "- work | personal | finance | fitness | newsletter | receipt | promo",
-        "",
-        "Return ONLY a JSON array, no prose and no code fences, one object per "
-        'email in the same order: [{"id": "...", "category": "...", '
-        '"action": "..." or null, "confidence": 0.0-1.0}, ...]',
-        "",
-        "Emails:",
-    ]
-    for i, e in enumerate(batch, 1):
-        body = (e.get("body") or "")[:BODY_CHARS_TO_LLM]
-        lines += [
-            f"{i}. id: {e['id']}",
-            f"   direction: {e.get('direction')}",
-            f"   from: {e.get('from')}",
-            f"   subject: {e.get('subject')}",
-            f"   body: {body}",
-        ]
-    return "\n".join(lines)
-
-
-def _strip_code_fence(text: str) -> str:
-    text = text.strip()
-    text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
-    text = re.sub(r"```$", "", text)
-    return text.strip()
-
-
-def _call_llm_batch(batch: list[dict]) -> dict:
-    """Returns {id: {"category":..., "action":..., "confidence":...}} for
-    whatever the model returned validly. Missing/invalid entries are simply
-    absent from the result — callers treat those as llm-fallback."""
-    if not batch:
-        return {}
-    client = _client()
-
-    text = None
-    for attempt in range(MAX_RETRIES):
-        try:
-            response = client.models.generate_content(model=MODEL, contents=_build_prompt(batch))
-            text = response.text or ""
-            break
-        except genai_errors.APIError as e:
-            # 429 (rate limit) and 5xx (transient server errors) are worth
-            # retrying with backoff; other API errors (400, permission, etc.)
-            # won't resolve themselves.
-            retryable = e.code == 429 or e.code >= 500
-            if retryable and attempt < MAX_RETRIES - 1:
-                delay = RETRY_BACKOFF_SECONDS * (2 ** attempt)
-                print(f"  LLM call got {e.code}, retrying in {delay}s "
-                      f"(attempt {attempt + 1}/{MAX_RETRIES})...", file=sys.stderr)
-                time.sleep(delay)
-                continue
-            print(f"  LLM batch call failed: {e}", file=sys.stderr)
-            return {}
-        except Exception as e:
-            print(f"  LLM batch call failed: {e}", file=sys.stderr)
-            return {}
-
-    if text is None:
-        return {}
-    try:
-        parsed = json.loads(_strip_code_fence(text))
-    except Exception as e:
-        print(f"  LLM batch call failed: {e}", file=sys.stderr)
-        return {}
-
-    results = {}
-    if not isinstance(parsed, list):
-        return {}
-    for item in parsed:
-        if not isinstance(item, dict) or "id" not in item:
-            continue
-        category = item.get("category")
-        action = item.get("action")
-        if category not in CATEGORIES:
-            continue
-        if action is not None and action not in ACTIONS:
-            continue
-        results[item["id"]] = {
-            "category": category,
-            "action": action,
-            "confidence": item.get("confidence"),
-        }
-    return results
-
-
-# --- public interfaces --------------------------------------------------------
 def classify(email: dict) -> Label:
     """Classify a single email. Rules first, LLM fallback — the interface a
     future apply_labels_to_gmail.py can reuse unchanged."""
     direction = email.get("direction")
     rule_label = classify_rules(email)
 
-    if not _is_unresolved(rule_label, direction):
-        return _finalize(rule_label, direction)
+    if not is_unresolved(rule_label, direction):
+        return finalize(rule_label, direction)
 
-    llm_results = _call_llm_batch([email])
+    llm_results = call_batch_with_retry([email])
     parsed = llm_results.get(email["id"])
     if parsed is None:
         final = Label(action="fyi", category="personal", method="llm-fallback")
@@ -234,32 +45,55 @@ def classify(email: dict) -> Label:
         category = rule_label.category if rule_label else parsed["category"]
         final = Label(
             action=parsed["action"], category=category, method="llm",
-            confidence=parsed.get("confidence"),
+            confidence=parsed.get("confidence"), needs_review=parsed.get("needs_review", False),
         )
-    return _finalize(final, direction)
+    return finalize(final, direction)
 
 
-def label_batch(emails: list[dict]) -> list[dict]:
+def label_batch(
+    emails: list[dict],
+    use_cache: bool = False,
+    cache_path: str = cache.DEFAULT_CACHE_PATH,
+) -> list[dict]:
     """Efficient bulk path: rules for everything, then one LLM call per
-    BATCH_SIZE unresolved emails instead of one call per email."""
+    BATCH_SIZE unresolved emails instead of one call per email. With
+    use_cache=True, unchanged emails (same id + clean_body) reuse a prior
+    run's LLM result instead of hitting the model again."""
     resolved: dict[str, Label] = {}
     pending: list[tuple[dict, str | None]] = []  # (email, rule_category_hint)
+
+    cache_data = cache.load_cache(cache_path) if use_cache else {}
+    cache_hits = 0
 
     for email in emails:
         direction = email.get("direction")
         rule_label = classify_rules(email)
-        if not _is_unresolved(rule_label, direction):
-            resolved[email["id"]] = _finalize(rule_label, direction)
-        else:
-            hint = rule_label.category if rule_label else None
-            pending.append((email, hint))
+        if not is_unresolved(rule_label, direction):
+            resolved[email["id"]] = finalize(rule_label, direction)
+            continue
+
+        hint = rule_label.category if rule_label else None
+
+        if use_cache:
+            cached = cache_data.get(cache.cache_key(email))
+            if cached is not None:
+                cache_hits += 1
+                category = hint if hint else cached["category"]
+                final = Label(
+                    action=cached["action"], category=category, method="llm",
+                    confidence=cached.get("confidence"), needs_review=cached.get("needs_review", False),
+                )
+                resolved[email["id"]] = finalize(final, direction)
+                continue
+
+        pending.append((email, hint))
 
     for i in range(0, len(pending), BATCH_SIZE):
         if i > 0:
             time.sleep(INTER_BATCH_DELAY_SECONDS)
         chunk = pending[i:i + BATCH_SIZE]
         print(f"  labeling batch {i // BATCH_SIZE + 1} ({len(chunk)} emails)...", file=sys.stderr)
-        llm_results = _call_llm_batch([e for e, _ in chunk])
+        llm_results = call_batch_with_retry([e for e, _ in chunk])
         for email, hint in chunk:
             parsed = llm_results.get(email["id"])
             if parsed is None:
@@ -268,19 +102,26 @@ def label_batch(emails: list[dict]) -> list[dict]:
                 category = hint if hint else parsed["category"]
                 final = Label(
                     action=parsed["action"], category=category, method="llm",
-                    confidence=parsed.get("confidence"),
+                    confidence=parsed.get("confidence"), needs_review=parsed.get("needs_review", False),
                 )
-            resolved[email["id"]] = _finalize(final, email.get("direction"))
+                if use_cache:
+                    cache_data[cache.cache_key(email)] = parsed
+            resolved[email["id"]] = finalize(final, email.get("direction"))
+
+    if use_cache:
+        cache.save_cache(cache_data, cache_path)
+        if cache_hits:
+            print(f"  cache: reused {cache_hits} previously-labeled email(s)", file=sys.stderr)
 
     return [{**email, "label": asdict(resolved[email["id"]])} for email in emails]
 
 
-# --- summary output ------------------------------------------------------------
 def print_summary(labeled: list[dict]) -> None:
     total = len(labeled)
     by_category: dict[str, int] = {}
     by_action: dict[str, int] = {}
     by_method: dict[str, int] = {}
+    needs_review_count = 0
 
     for e in labeled:
         label = e["label"]
@@ -288,6 +129,8 @@ def print_summary(labeled: list[dict]) -> None:
         action = label["action"] or "(none)"
         by_action[action] = by_action.get(action, 0) + 1
         by_method[label["method"]] = by_method.get(label["method"], 0) + 1
+        if label.get("needs_review"):
+            needs_review_count += 1
 
     print(f"\nLabeled {total} emails", file=sys.stderr)
     print("By category:", file=sys.stderr)
@@ -300,6 +143,9 @@ def print_summary(labeled: list[dict]) -> None:
     for k, v in sorted(by_method.items(), key=lambda kv: -kv[1]):
         print(f"  {k}: {v}", file=sys.stderr)
 
+    print(f"\nNeeds review (confidence < {NEEDS_REVIEW_CONFIDENCE_THRESHOLD}): {needs_review_count}", file=sys.stderr)
+    print(f"LLM fallback (parse failures): {by_method.get('llm-fallback', 0)}", file=sys.stderr)
+
     print("\nMost recent needs-reply:", file=sys.stderr)
     needs_reply = [e for e in labeled if e["label"]["action"] == "needs-reply"][:5]
     if not needs_reply:
@@ -308,17 +154,19 @@ def print_summary(labeled: list[dict]) -> None:
         print(f"  {e.get('from')} — {e.get('subject')}", file=sys.stderr)
 
 
-# --- CLI -----------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--in", dest="in_path", default="emails_last_week.json")
     parser.add_argument("--out", dest="out_path", default="emails_labeled.json")
+    parser.add_argument("--cache", action="store_true",
+                         help="Reuse cached LLM labels for unchanged emails across runs")
+    parser.add_argument("--cache-file", default=cache.DEFAULT_CACHE_PATH)
     args = parser.parse_args()
 
     with open(args.in_path) as f:
         emails = json.load(f)
 
-    labeled = label_batch(emails)
+    labeled = label_batch(emails, use_cache=args.cache, cache_path=args.cache_file)
 
     with open(args.out_path, "w") as f:
         json.dump(labeled, f, indent=2)

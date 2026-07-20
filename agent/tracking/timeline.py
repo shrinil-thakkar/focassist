@@ -26,12 +26,12 @@ DEFAULT_CONFIG = {
     "override_cap_minutes": 45,
     # anything focused that looks like a browser but isn't here → flagged (§5)
     # Chrome PWAs (Telegram Web, Titan, etc.) are NOT listed here — the web extension
-    # cannot inject into PWA windows, so they would always be browser-unlabeled.
+    # cannot inject into PWA windows, so they would always be browser-unknown.
     # They are classified directly by app name via categorizer rules instead.
     "browser_app_names": ["Google Chrome", "Google Chrome Canary"],
     # Chrome-focused URL coverage below this over a rolling window → flag (§5)
     "url_coverage_flag_threshold": 0.5,
-    # URL scheme prefixes that map to neutral/system rather than browser-unlabeled.
+    # URL scheme prefixes that map to neutral/system rather than browser-unknown.
     # aw-watcher-web reports these via the tabs API (Step-0 "good case"); classify
     # them as neutral so they don't inflate distraction or trigger coverage warnings.
     "neutral_url_schemes": ["chrome://", "chrome-extension://", "about:"],
@@ -140,7 +140,7 @@ def _title_domain(title: str, cfg: dict) -> str | None:
 
 
 def _classify_app(app: str) -> tuple[str, str]:
-    from agent.categorizer import classify
+    from agent.tracking.categorizer import classify
     rule = classify(app, "", "")
     if rule:
         return rule["tier"], rule["category"]
@@ -174,7 +174,7 @@ def _active_app_segments(window_events: list[dict], not_afk: list[tuple]) -> lis
 # ── §2 step 3 — browser override ──────────────────────────────────────────────
 
 def _classify_web(app: str, domain: str, url: str) -> tuple[str, str]:
-    from agent.categorizer import classify
+    from agent.tracking.categorizer import classify
     rule = classify(app, domain, url)
     if rule:
         return rule["tier"], rule["category"]
@@ -191,9 +191,9 @@ def _apply_browser_override(segments: list[dict], web_events: list[dict], cfg: d
     expected, not a sign of a dead extension.
 
     Portions of browser focus with no matching web event at all become
-    `browser-unlabeled` (only genuine real-browsing gaps; flagged in §5).
+    `browser-unknown` (only genuine real-browsing gaps; flagged in §5).
     """
-    from agent.categorizer import _extract_domain
+    from agent.tracking.categorizer import _extract_domain
 
     browser_names = set(cfg["browser_app_names"])
     neutral_schemes = tuple(cfg.get("neutral_url_schemes",
@@ -319,7 +319,7 @@ def _is_engaged(app: str, domain: str, tier: str, cfg: dict) -> bool:
 
 def _engaged_spans_in(start: datetime, end: datetime, window_events, web_events, cfg) -> list[dict]:
     """Focused-context spans inside [start, end) that belong to the engaged set."""
-    from agent.categorizer import _extract_domain
+    from agent.tracking.categorizer import _extract_domain
 
     spans = []
     for ev in window_events:

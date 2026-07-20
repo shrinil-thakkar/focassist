@@ -1,7 +1,7 @@
 """
 Focus session detector — runs on the Mac agent (has raw AW event timestamps).
 
-Consumes the resolved timeline from agent.timeline.resolve_timeline (the AFK-anchored
+Consumes the resolved timeline from agent.tracking.timeline.resolve_timeline (the AFK-anchored
 merge pipeline from docs/tracking-algorithm.md §2-3), so sessions, the 15-min report
 strip, and the hourly rollup all inherit the same active/idle/untracked correctness
 instead of re-deriving it from raw window events.
@@ -20,7 +20,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from agent.timeline import resolve_timeline
+from agent.tracking.timeline import resolve_timeline
 
 IST = ZoneInfo("Asia/Kolkata")
 

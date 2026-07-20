@@ -1,8 +1,8 @@
-"""Gmail tool — fetches recent sent/received email for the weekly review.
+"""Gmail client — fetches recent sent/received email for the weekly review.
 
-Mirrors agent/calendar.py's shape: one fetch function returning plain data,
-no AI here. Read-only (gmail.readonly scope) — nothing here can send,
-modify, or delete mail.
+Mirrors agent/google/calendar_client.py's shape: one fetch function returning
+plain data, no AI here. Read-only (gmail.readonly scope) — nothing here can
+send, modify, or delete mail.
 """
 
 import base64
@@ -12,7 +12,8 @@ import sys
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from agent.google_auth import get_credentials
+from agent.google.auth import get_credentials
+from agent.labeling.sanitize import sanitize_body
 
 BODY_CHAR_LIMIT = 5000
 
@@ -36,14 +37,25 @@ def _decode(data: str) -> str:
     return base64.urlsafe_b64decode(data.encode("utf-8")).decode("utf-8", errors="replace")
 
 
-def _extract_body(payload: dict) -> str:
-    """Recursively walk MIME parts, preferring text/plain, falling back to text/html."""
+def _extract_body(payload: dict) -> tuple[str, str]:
+    """Recursively walk MIME parts, preferring text/plain, falling back to text/html.
+
+    Returns (body, clean_body). `body` is the existing v1 extraction (capped,
+    tags stripped) — raw in the sense that it hasn't been checked for hidden-
+    text tricks. `clean_body` runs the same source through Layer 0
+    sanitization (agent.labeling.sanitize) and is the only field the LLM
+    layer is allowed to read.
+    """
     plain, html = _find_parts(payload)
     if plain:
-        return plain[:BODY_CHAR_LIMIT]
-    if html:
-        return _strip_html(html)[:BODY_CHAR_LIMIT]
-    return ""
+        body = plain[:BODY_CHAR_LIMIT]
+    elif html:
+        body = _strip_html(html)[:BODY_CHAR_LIMIT]
+    else:
+        body = ""
+
+    clean_body = sanitize_body(plain or html or "")[:BODY_CHAR_LIMIT]
+    return body, clean_body
 
 
 def _find_parts(part: dict):
@@ -116,6 +128,7 @@ def fetch_emails(days: int = 7, max_results: int = 200) -> list:
 
         headers = msg.get("payload", {}).get("headers", [])
         label_ids = msg.get("labelIds", [])
+        body, clean_body = _extract_body(msg.get("payload", {}))
         emails.append({
             "id": msg["id"],
             "thread_id": msg["threadId"],
@@ -125,7 +138,8 @@ def fetch_emails(days: int = 7, max_results: int = 200) -> list:
             "to": _header(headers, "To"),
             "subject": _header(headers, "Subject"),
             "snippet": msg.get("snippet", ""),
-            "body": _extract_body(msg.get("payload", {})),
+            "body": body,
+            "clean_body": clean_body,
             "gmail_labels": label_ids,
             "has_list_unsubscribe": bool(_header(headers, "List-Unsubscribe")),
         })

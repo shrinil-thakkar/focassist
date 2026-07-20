@@ -41,7 +41,7 @@ sudo tee "$LAUNCH_DAEMONS/com.focus.blocker.plist" > /dev/null << PLIST
     <key>ProgramArguments</key>
     <array>
         <string>$PYTHON</string>
-        <string>$REPO_DIR/agent/blocker_daemon.py</string>
+        <string>$REPO_DIR/agent/blocking/blocker_daemon.py</string>
     </array>
 
     <key>WorkingDirectory</key>

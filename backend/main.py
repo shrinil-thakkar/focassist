@@ -12,9 +12,9 @@ import threading
 import uvicorn
 
 import backend.db as db
-from backend.api import app as fastapi_app
-from backend.bot import build_app, send_to_owner
-from backend import scheduler
+from backend.interfaces.http import app as fastapi_app
+from backend.interfaces.telegram import build_app, send_to_owner
+from backend.domain import scheduler
 
 logging.basicConfig(
     level=logging.INFO,

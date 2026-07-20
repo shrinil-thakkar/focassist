@@ -26,10 +26,11 @@ POLL_INTERVAL_SECONDS = 300  # 5 minutes
 
 def _run_pipeline(target_date: date) -> None:
     """Fetch AW events for target_date, run the full classify pipeline, push to backend."""
-    from agent import tracker, sync
-    from agent.categorizer import categorize_events
-    from agent.timeline import resolve_timeline, detect_flags
-    from agent.session_detector import (
+    from agent import sync
+    from agent.tracking import tracker
+    from agent.tracking.categorizer import categorize_events
+    from agent.tracking.timeline import resolve_timeline, detect_flags
+    from agent.tracking.session_detector import (
         detect_sessions, build_timeline, build_hourly_aggregates, build_daily_aggregates,
     )
     from zoneinfo import ZoneInfo
@@ -72,8 +73,9 @@ def _run_pipeline(target_date: date) -> None:
 
 
 def run_cycle() -> None:
-    from agent import sync, blocker
-    from agent.categorizer import load_rules
+    from agent import sync
+    from agent.blocking import blocker
+    from agent.tracking.categorizer import load_rules
 
     # Refresh rules from backend
     backend_rules = sync.get_rules()
@@ -96,7 +98,7 @@ def run_cycle() -> None:
     for job in sync.get_fetch_jobs():
         try:
             log.info("Running Gmail+Calendar fetch (job %s, days=%s)", job["id"], job["days"])
-            from agent.weekly_fetch import fetch_and_write
+            from agent.google.weekly_fetch import fetch_and_write
             fetch_and_write(days=job["days"])
             sync.mark_fetch_job_done(job["id"])
             log.info("Fetch job %s done", job["id"])

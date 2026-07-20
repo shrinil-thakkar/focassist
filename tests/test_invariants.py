@@ -7,10 +7,10 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from agent.categorizer import load_rules
-from agent.timeline import resolve_timeline, detect_flags, DEFAULT_CONFIG
-from agent.session_detector import build_daily_aggregates, build_hourly_aggregates
-from backend.scoring import _top_items, _tier_totals
+from agent.tracking.categorizer import load_rules
+from agent.tracking.timeline import resolve_timeline, detect_flags, DEFAULT_CONFIG
+from agent.tracking.session_detector import build_daily_aggregates, build_hourly_aggregates
+from backend.domain.scoring import _top_items, _tier_totals
 
 UTC = timezone.utc
 IST = ZoneInfo("Asia/Kolkata")

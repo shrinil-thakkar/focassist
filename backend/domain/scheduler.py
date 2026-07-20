@@ -52,7 +52,7 @@ def start(send_message_fn) -> AsyncIOScheduler:
     log.info("Scheduler started.")
 
     # Re-arm any future focus blocks from today/tomorrow that survived a restart
-    from backend.rules import today_date, tomorrow_date
+    from backend.domain.rules import today_date, tomorrow_date
     schedule_block_nudges(today_date())
     schedule_block_nudges(tomorrow_date())
 
@@ -149,8 +149,8 @@ async def _focus_end_nudge(send, block: dict, date: str) -> None:
 
 async def _daily_report(send) -> None:
     from backend import db
-    from backend.rules import today_date, ist_now
-    from backend.scoring import format_daily_report, compute_score
+    from backend.domain.rules import today_date, ist_now
+    from backend.domain.scoring import format_daily_report, compute_score
 
     today = today_date()
     yesterday = (ist_now().date() - timedelta(days=1)).isoformat()
@@ -173,13 +173,13 @@ async def _daily_report(send) -> None:
 
 
 async def _evening_nudge(send) -> None:
-    from backend.rules import format_plan_prompt, tomorrow_date
+    from backend.domain.rules import format_plan_prompt, tomorrow_date
     await send(format_plan_prompt(tomorrow_date()), "Markdown")
 
 
 async def _morning_nudge(send) -> None:
     from backend import db
-    from backend.rules import format_morning_confirm, today_date
+    from backend.domain.rules import format_morning_confirm, today_date
     today = today_date()
     plan = db.get_plan(today)
     if plan:
@@ -194,8 +194,8 @@ async def _morning_nudge(send) -> None:
 
 async def _weekly_report(send) -> None:
     from backend import db
-    from backend.rules import ist_now
-    from backend.scoring import format_weekly_report
+    from backend.domain.rules import ist_now
+    from backend.domain.scoring import format_weekly_report
 
     today = ist_now().date()
     days = []
