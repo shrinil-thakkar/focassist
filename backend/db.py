@@ -123,6 +123,14 @@ def init_db() -> None:
                         CHECK(status IN ('pending','done')),
                 created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS fetch_queue (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                days    INTEGER NOT NULL,
+                status  TEXT NOT NULL DEFAULT 'pending'
+                        CHECK(status IN ('pending','done')),
+                created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
         """)
 
         # ── rules table — recreate if old schema (no tier/url_match support) ──
@@ -479,6 +487,29 @@ def mark_reprocess_done(date: str) -> None:
     with get_db() as conn:
         conn.execute(
             "UPDATE reprocess_queue SET status='done' WHERE date=?", (date,)
+        )
+
+
+def add_fetch_job(days: int) -> int:
+    with get_db() as conn:
+        cur = conn.execute(
+            "INSERT INTO fetch_queue (days, status) VALUES (?, 'pending')", (days,)
+        )
+        return cur.lastrowid
+
+
+def get_pending_fetch_jobs() -> list[dict]:
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, days FROM fetch_queue WHERE status='pending' ORDER BY created"
+        ).fetchall()
+    return [{"id": r["id"], "days": r["days"]} for r in rows]
+
+
+def mark_fetch_job_done(job_id: int) -> None:
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE fetch_queue SET status='done' WHERE id=?", (job_id,)
         )
 
 

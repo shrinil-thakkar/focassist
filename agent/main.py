@@ -92,6 +92,17 @@ def run_cycle() -> None:
         except Exception as e:
             log.error("Reprocess failed for %s: %s", job_date_str, e)
 
+    # Refetch Gmail+Calendar data queued via /fetch bot command
+    for job in sync.get_fetch_jobs():
+        try:
+            log.info("Running Gmail+Calendar fetch (job %s, days=%s)", job["id"], job["days"])
+            from agent.weekly_fetch import fetch_and_write
+            fetch_and_write(days=job["days"])
+            sync.mark_fetch_job_done(job["id"])
+            log.info("Fetch job %s done", job["id"])
+        except Exception as e:
+            log.error("Fetch job %s failed: %s", job["id"], e)
+
     # Act on directive
     directive = sync.get_directive()
     if directive.get("focus_block_active") and directive.get("block_domains"):

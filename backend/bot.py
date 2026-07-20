@@ -8,6 +8,7 @@ Commands (v1):
   /shift <block> <±mins>  — shift a time block
   /block_now <mins>       — start ad-hoc focus block
   /sensitive <app|domain> — mark as never-send-to-LLM
+  /fetch [days]           — refetch Gmail+Calendar data (Mac agent picks up async)
   free text               — store as plan reply during planning flow
 """
 import logging
@@ -59,7 +60,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "/report — weekly report\n"
         "/block\\_now <mins> — start a focus block\n"
         "/shift <label> <±mins> — move a time block\n"
-        "/sensitive <app|domain> — never send to LLM",
+        "/sensitive <app|domain> — never send to LLM\n"
+        "/fetch [days] — refetch Gmail+Calendar data",
         parse_mode="Markdown",
     )
 
@@ -75,6 +77,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "/block\\_now `<mins>` `[domain ...]` — start a focus block\n"
         "/shift `<label>` `<±mins>` — move a time block\n"
         "/sensitive `<app|domain>` — never send to LLM\n"
+        "/fetch `[days]` — refetch Gmail+Calendar data (default 7 days)\n"
         "/help — show this menu",
         parse_mode="Markdown",
     )
@@ -149,6 +152,26 @@ async def cmd_reprocess(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"Queued reprocess for `{target}`. The Mac agent will pick it up within ~5 min.\n"
         f"Then run `/day {target}` to see the updated report.",
+        parse_mode="Markdown",
+    )
+
+
+async def cmd_fetch(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    # /fetch [days]  — refetch Gmail + Calendar data (default 7 days)
+    args = ctx.args or []
+    days = 7
+    if args:
+        try:
+            days = int(args[0])
+        except ValueError:
+            await update.message.reply_text(
+                "Usage: `/fetch [days]`  e.g. `/fetch 7`", parse_mode="Markdown"
+            )
+            return
+    db.add_fetch_job(days)
+    await update.message.reply_text(
+        f"Queued a Gmail + Calendar refetch (last {days} days). "
+        f"The Mac agent will pick it up within ~5 min.",
         parse_mode="Markdown",
     )
 
@@ -381,6 +404,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("shift", cmd_shift))
     app.add_handler(CommandHandler("block_now", cmd_block_now))
     app.add_handler(CommandHandler("sensitive", cmd_sensitive))
+    app.add_handler(CommandHandler("fetch", cmd_fetch))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     return app

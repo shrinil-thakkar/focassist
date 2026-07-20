@@ -122,3 +122,24 @@ def mark_reprocess_done(job_date: str) -> None:
         _post(f"/reprocess-jobs/{job_date}/done", {})
     except (URLError, HTTPError) as e:
         log.error("Failed to mark reprocess done for %s: %s", job_date, e)
+
+
+def get_fetch_jobs() -> list[dict]:
+    """Return pending Gmail+Calendar fetch jobs queued by the /fetch bot command."""
+    if not BACKEND_URL:
+        return []
+    try:
+        result = _get("/fetch-jobs")
+        return result.get("jobs", [])
+    except (URLError, HTTPError) as e:
+        log.error("Failed to fetch jobs: %s", e)
+        return []
+
+
+def mark_fetch_job_done(job_id: int) -> None:
+    if not BACKEND_URL:
+        return
+    try:
+        _post(f"/fetch-jobs/{job_id}/done", {})
+    except (URLError, HTTPError) as e:
+        log.error("Failed to mark fetch job %s done: %s", job_id, e)

@@ -10,44 +10,18 @@ Requires Python 3.9+ (uses zoneinfo).
 """
 
 import datetime as dt
-import os
 from dataclasses import dataclass
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+from agent.google_auth import get_credentials
+
 # --- config -----------------------------------------------------------------
-SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
-
-_DIR = Path(os.environ.get("FOCASSIST_DIR", Path.home() / ".focassist"))
-CREDENTIALS_FILE = str(_DIR / "credentials.json")
-TOKEN_FILE = str(_DIR / "token.json")
-
 TIMEZONE = ZoneInfo("Asia/Kolkata")   # your local timezone
 DAY_START = dt.time(9, 0)             # earliest hour you'd plan work into
 DAY_END = dt.time(21, 0)              # latest hour you'd plan work into
 MIN_GAP_MINUTES = 15                  # ignore free slivers shorter than this
-
-
-# --- auth (same flow you already authorized) --------------------------------
-def get_credentials():
-    _DIR.mkdir(parents=True, exist_ok=True)
-    creds = None
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open(TOKEN_FILE, "w") as f:
-            f.write(creds.to_json())
-    return creds
 
 
 # --- data shapes the planner will consume -----------------------------------
@@ -172,6 +146,48 @@ def get_today_context() -> DayContext:
     events = fetch_events(service, today)
     gaps = compute_gaps(events, today)
     return DayContext(date=today, events=events, gaps=gaps)
+
+
+# --- retrospective fetch (last N days, for weekly review) -------------------
+def get_past_events(days: int = 7, max_results: int = 20) -> list:
+    """The most recent `max_results` events over the past `days` days, newest last."""
+    creds = get_credentials()
+    service = build("calendar", "v3", credentials=creds)
+
+    now = dt.datetime.now(TIMEZONE)
+    time_min = now - dt.timedelta(days=days)
+
+    raw = (
+        service.events()
+        .list(
+            calendarId="primary",
+            timeMin=time_min.isoformat(),
+            timeMax=now.isoformat(),
+            singleEvents=True,
+            orderBy="startTime",
+        )
+        .execute()
+        .get("items", [])
+    )
+
+    events = []
+    for e in raw:
+        if _is_declined(e):
+            continue
+        start = e["start"].get("dateTime", e["start"].get("date"))
+        end = e["end"].get("dateTime", e["end"].get("date"))
+        attendees = [
+            a["email"] for a in e.get("attendees", []) if not a.get("self")
+        ]
+        events.append({
+            "summary": e.get("summary", "(no title)"),
+            "start": start,
+            "end": end,
+            "attendees": attendees,
+            "description": (e.get("description") or "")[:500],
+        })
+    # `events` is ascending by start time; keep the most recent ones, not the oldest.
+    return events[-max_results:]
 
 
 # --- run it to eyeball today ------------------------------------------------

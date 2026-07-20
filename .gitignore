@@ -18,3 +18,5 @@ infra/cdk.context.json
 *.pem
 credentials.json
 token.json
+emails_last_week.json
+calendar_last_week.json

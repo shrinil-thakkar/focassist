@@ -139,6 +139,17 @@ def reprocess_done(job_date: str, _=Depends(require_auth)):
     return {"status": "ok"}
 
 
+@app.get("/fetch-jobs")
+def fetch_jobs(_=Depends(require_auth)):
+    return {"jobs": db.get_pending_fetch_jobs()}
+
+
+@app.post("/fetch-jobs/{job_id}/done")
+def fetch_job_done(job_id: int, _=Depends(require_auth)):
+    db.mark_fetch_job_done(job_id)
+    return {"status": "ok"}
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
