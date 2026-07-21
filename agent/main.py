@@ -108,11 +108,11 @@ def run_cycle() -> None:
 
         try:
             import json
-            from agent.label_tool import label_batch
-            with open("emails_last_week.json") as f:
+            from agent.label_tool import DEFAULT_EMAILS_PATH, DEFAULT_LABELED_PATH, label_batch
+            with open(DEFAULT_EMAILS_PATH) as f:
                 emails = json.load(f)
             labeled = label_batch(emails, use_cache=True)
-            with open("emails_labeled.json", "w") as f:
+            with open(DEFAULT_LABELED_PATH, "w") as f:
                 json.dump(labeled, f, indent=2)
             log.info("Labeled %d emails (job %s)", len(labeled), job["id"])
         except Exception as e:

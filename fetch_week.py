@@ -17,8 +17,10 @@ automatically too).
 import argparse
 import json
 import sys
+from pathlib import Path
 
-from agent.google.weekly_fetch import fetch_and_write
+from agent.google.weekly_fetch import DEFAULT_CALENDAR_PATH, DEFAULT_EMAILS_PATH, fetch_and_write
+from agent.label_tool import DEFAULT_LABELED_PATH
 
 
 def main():
@@ -26,10 +28,10 @@ def main():
     parser.add_argument("--days", type=int, default=7, help="How many days back to fetch (default: 7)")
     parser.add_argument("--max-emails", type=int, default=50, help="Cap on emails fetched (default: 50)")
     parser.add_argument("--max-events", type=int, default=20, help="Cap on calendar events fetched (default: 20)")
-    parser.add_argument("--emails-out", default="emails_last_week.json")
-    parser.add_argument("--calendar-out", default="calendar_last_week.json")
+    parser.add_argument("--emails-out", default=DEFAULT_EMAILS_PATH)
+    parser.add_argument("--calendar-out", default=DEFAULT_CALENDAR_PATH)
     parser.add_argument("--no-label", action="store_true", help="Skip automatic labeling of fetched emails")
-    parser.add_argument("--labels-out", default="emails_labeled.json")
+    parser.add_argument("--labels-out", default=DEFAULT_LABELED_PATH)
     parser.add_argument("--no-cache", action="store_true",
                          help="Force fresh LLM calls instead of reusing cached labels")
     args = parser.parse_args()
@@ -55,6 +57,7 @@ def main():
         with open(args.emails_out) as f:
             emails = json.load(f)
         labeled = label_batch(emails, use_cache=not args.no_cache)
+        Path(args.labels_out).parent.mkdir(parents=True, exist_ok=True)
         with open(args.labels_out, "w") as f:
             json.dump(labeled, f, indent=2)
         print_summary(labeled)

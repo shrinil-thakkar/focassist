@@ -14,9 +14,11 @@ uses (batches the LLM layer 10-15 emails per call instead of one-by-one).
 
 import argparse
 import json
+import os
 import sys
 import time
 from dataclasses import asdict
+from pathlib import Path
 
 from agent.labeling import cache
 from agent.labeling.llm import (
@@ -26,6 +28,11 @@ from agent.labeling.llm import (
     call_batch_with_retry,
 )
 from agent.labeling.rules import Label, classify_rules, finalize, is_unresolved
+
+# Same FOCASSIST_DIR convention as credentials/token/db (agent/google/auth.py).
+_DIR = Path(os.environ.get("FOCASSIST_DIR", Path.home() / ".focassist"))
+DEFAULT_EMAILS_PATH = str(_DIR / "emails_last_week.json")
+DEFAULT_LABELED_PATH = str(_DIR / "emails_labeled.json")
 
 
 def classify(email: dict) -> Label:
@@ -156,8 +163,8 @@ def print_summary(labeled: list[dict]) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--in", dest="in_path", default="emails_last_week.json")
-    parser.add_argument("--out", dest="out_path", default="emails_labeled.json")
+    parser.add_argument("--in", dest="in_path", default=DEFAULT_EMAILS_PATH)
+    parser.add_argument("--out", dest="out_path", default=DEFAULT_LABELED_PATH)
     parser.add_argument("--cache", action="store_true",
                          help="Reuse cached LLM labels for unchanged emails across runs")
     parser.add_argument("--cache-file", default=cache.DEFAULT_CACHE_PATH)
@@ -168,6 +175,7 @@ def main():
 
     labeled = label_batch(emails, use_cache=args.cache, cache_path=args.cache_file)
 
+    Path(args.out_path).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out_path, "w") as f:
         json.dump(labeled, f, indent=2)
 

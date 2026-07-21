@@ -96,7 +96,7 @@ class FocAssistBackendStack(Stack):
         CfnOutput(self, "BackendUrl", value=f"http://{eip.ref}:8000",
             description="Set this as FOCASSIST_BACKEND_URL in the agent plist")
 
-        CfnOutput(self, "SshCommand", value=f"ssh -i focassist.pem ubuntu@{eip.ref}",
+        CfnOutput(self, "SshCommand", value=f"ssh -i ~/.ssh/focassist.pem ubuntu@{eip.ref}",
             description="SSH after downloading the private key (see GetPrivateKeyCmd)")
 
         CfnOutput(self, "GetPrivateKeyCmd",
@@ -104,14 +104,14 @@ class FocAssistBackendStack(Stack):
                 f"aws ssm get-parameter"
                 f" --name /ec2/keypair/{key_pair.key_pair_id}"
                 f" --with-decryption --query Parameter.Value --output text"
-                f" > focassist.pem && chmod 400 focassist.pem"
+                f" > ~/.ssh/focassist.pem && chmod 400 ~/.ssh/focassist.pem"
             ),
             description="Run this locally to download the SSH private key")
 
         CfnOutput(self, "ServiceLogs",
-            value=f"ssh -i focassist.pem ubuntu@{eip.ref} 'sudo journalctl -u focassist -f'",
+            value=f"ssh -i ~/.ssh/focassist.pem ubuntu@{eip.ref} 'sudo journalctl -u focassist -f'",
             description="Stream backend logs")
 
         CfnOutput(self, "SetupLog",
-            value=f"ssh -i focassist.pem ubuntu@{eip.ref} 'cat /var/log/focassist-setup.log'",
+            value=f"ssh -i ~/.ssh/focassist.pem ubuntu@{eip.ref} 'cat /var/log/focassist-setup.log'",
             description="View the one-time bootstrap log if something went wrong")

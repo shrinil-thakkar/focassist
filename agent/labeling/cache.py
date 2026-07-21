@@ -7,9 +7,12 @@ Pure file I/O, no network.
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
-DEFAULT_CACHE_PATH = "label_llm_cache.json"
+# Same FOCASSIST_DIR convention as credentials/token/db (agent/google/auth.py).
+_DIR = Path(os.environ.get("FOCASSIST_DIR", Path.home() / ".focassist"))
+DEFAULT_CACHE_PATH = str(_DIR / "label_llm_cache.json")
 KEY_BODY_CHARS = 500
 
 
@@ -30,4 +33,6 @@ def load_cache(path: str = DEFAULT_CACHE_PATH) -> dict:
 
 
 def save_cache(cache: dict, path: str = DEFAULT_CACHE_PATH) -> None:
-    Path(path).write_text(json.dumps(cache, indent=2))
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(cache, indent=2))

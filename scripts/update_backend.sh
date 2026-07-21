@@ -4,7 +4,7 @@
 set -euo pipefail
 
 EC2_IP=${1:?"Usage: $0 <ec2-ip> [key.pem]"}
-KEY=${2:-focassist.pem}
+KEY=${2:-$HOME/.ssh/focassist.pem}
 
 if [ ! -f "$KEY" ]; then
   echo "Key file '$KEY' not found. Download it first:"

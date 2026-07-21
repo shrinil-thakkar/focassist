@@ -3,20 +3,29 @@
 """
 
 import json
+import os
 import sys
+from pathlib import Path
 
 from agent.google.calendar_client import get_past_events
 from agent.google.gmail_client import fetch_emails
+
+# Same FOCASSIST_DIR convention as credentials/token/db (agent/google/auth.py).
+_DIR = Path(os.environ.get("FOCASSIST_DIR", Path.home() / ".focassist"))
+DEFAULT_EMAILS_PATH = str(_DIR / "emails_last_week.json")
+DEFAULT_CALENDAR_PATH = str(_DIR / "calendar_last_week.json")
 
 
 def fetch_and_write(
     days: int = 7,
     max_emails: int = 50,
     max_events: int = 20,
-    emails_out: str = "emails_last_week.json",
-    calendar_out: str = "calendar_last_week.json",
+    emails_out: str = DEFAULT_EMAILS_PATH,
+    calendar_out: str = DEFAULT_CALENDAR_PATH,
 ) -> tuple[int, int]:
     """Fetch and write both JSON files. Returns (email_count, event_count)."""
+    _DIR.mkdir(parents=True, exist_ok=True)
+
     print(f"Fetching last {days} day(s) of email...", file=sys.stderr)
     emails = fetch_emails(days=days, max_results=max_emails)
     with open(emails_out, "w") as f:
